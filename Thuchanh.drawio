@@ -28,7 +28,7 @@
         <mxCell id="2GsPM8NwuzbFLZ8GE7ma-7" parent="2GsPM8NwuzbFLZ8GE7ma-6" style="align=left;strokeColor=none;fillColor=none;spacingLeft=4;spacingRight=4;fontSize=12;verticalAlign=top;rotatable=0;part=1;html=1;whiteSpace=wrap;" value="&lt;b style=&quot;background-color: rgb(102, 178, 255);&quot;&gt;PK Employee_ID&lt;/b&gt;&lt;div&gt;Name&lt;/div&gt;&lt;div&gt;Zip_code&lt;/div&gt;" vertex="1">
           <mxGeometry height="60" width="160" y="50" as="geometry" />
         </mxCell>
-        <mxCell id="2GsPM8NwuzbFLZ8GE7ma-21" edge="1" parent="1" source="2GsPM8NwuzbFLZ8GE7ma-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;endArrow=ERoneToMany;endFill=0;startArrow=ERone;startFill=0;" target="2GsPM8NwuzbFLZ8GE7ma-10">
+        <mxCell id="2GsPM8NwuzbFLZ8GE7ma-21" edge="1" parent="1" source="2GsPM8NwuzbFLZ8GE7ma-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;defaultLabelBackgroundColor=page;endArrow=ERone;endFill=0;startArrow=ERoneToMany;startFill=0;" target="2GsPM8NwuzbFLZ8GE7ma-10">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="2GsPM8NwuzbFLZ8GE7ma-8" parent="1" style="swimlane;childLayout=stackLayout;horizontal=1;startSize=50;horizontalStack=0;rounded=1;fontSize=14;fontStyle=0;strokeWidth=2;resizeParent=0;resizeLast=1;shadow=0;dashed=0;align=center;arcSize=4;whiteSpace=wrap;html=1;" value="ORDERS_DETAIL" vertex="1">
@@ -55,8 +55,8 @@
         <mxCell id="2GsPM8NwuzbFLZ8GE7ma-20" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=#FFFF66;align=center;verticalAlign=middle;rounded=0;autosize=1;resizable=0;" value="Include" vertex="1">
           <mxGeometry height="30" width="60" x="420" y="250" as="geometry" />
         </mxCell>
-        <mxCell id="2GsPM8NwuzbFLZ8GE7ma-22" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=#FFFF66;align=center;verticalAlign=middle;rounded=0;autosize=1;resizable=0;" value="Include" vertex="1">
-          <mxGeometry height="30" width="60" x="420" y="435" as="geometry" />
+        <mxCell id="2GsPM8NwuzbFLZ8GE7ma-22" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=#FFFF66;align=center;verticalAlign=middle;rounded=0;autosize=1;resizable=0;" value="Contained in" vertex="1">
+          <mxGeometry height="30" width="90" x="420" y="435" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
