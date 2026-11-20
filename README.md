@@ -26,27 +26,24 @@
 .
 ├── README.md
 ├── .gitignore
-├── Bao_Cao_Phase1_Supply_Chain_Warehouse_Logistics.pdf   # Phase 1: Conceptual Design (SRS & EER)
-├── EER Diagram.png                                       # Phase 1: EER Diagram
+├── Bao_Cao_Phase1_Supply_Chain_Warehouse_Logistics.pdf     # Báo cáo Phase 1 gốc (SRS & EER)
+├── Bao_Cao_Tong_Hop_Supply_Chain_Warehouse_Logistics.pdf   # Báo cáo tổng hợp toàn bộ Phase 1 – Phase 4 (Full Report)
+├── EER Diagram.png                                         # Phase 1: Sơ đồ EER
 ├── Phase2/
-│   ├── Bao_Cao_Phase2_Supply_Chain_Warehouse_Logistics.docx  # Logical Mapping (Elmasri), BCNF Proofs, ISO 11179 Data Dictionary
-│   └── Physical_Schema_Diagram.drawio                        # Sơ đồ vật lý chuẩn IE Crow's Foot (MySQL 8.0+)
+│   └── Physical_Schema_Diagram.drawio                      # Phase 2: Sơ đồ vật lý chuẩn IE Crow's Foot (MySQL 8.0+)
 ├── Phase3/
-│   ├── Bao_Cao_Phase3_Supply_Chain_Warehouse_Logistics.docx  # Báo cáo triển khai, 12 Queries, Verification & RBAC
 │   └── sql/
-│       ├── 01_ddl_schema.sql           # 14 bảng chuẩn BCNF, 19 FKs, CHECK/REGEXP, 7 Secondary Indexes
-│       ├── 02_views_and_triggers.sql   # 3 Views & 6 Triggers (BR1, BR2, BR4 đệ quy, BR7, FR5)
-│       ├── 03_dml_mock_data.sql        # Dữ liệu mẫu 5 kho, 5 NCC, 12 SP (BOM 3 cấp), 6 PO, 6 Shipment
-│       ├── 04_complex_queries.sql      # 12 truy vấn phức tạp (WITH RECURSIVE, Window Functions, EXPLAIN)
-│       └── 05_verification_and_rbac.sql# 10 Test Cases kiểm chứng ràng buộc & RBAC 6 Roles (GRANT/REVOKE)
+│       ├── 01_ddl_schema.sql                               # 14 bảng chuẩn BCNF, 19 FKs, CHECK/REGEXP, 7 Secondary Indexes
+│       ├── 02_views_and_triggers.sql                       # 3 Views & 6 Triggers (BR1, BR2, BR4 đệ quy, BR7, FR5)
+│       ├── 03_dml_mock_data.sql                            # Dữ liệu mẫu 5 kho, 5 NCC, 12 SP (BOM 3 cấp), 6 PO, 6 Shipment
+│       ├── 04_complex_queries.sql                          # 12 truy vấn phức tạp (WITH RECURSIVE, Window Functions, EXPLAIN)
+│       └── 05_verification_and_rbac.sql                    # 10 Test Cases kiểm chứng ràng buộc & RBAC 6 Roles (GRANT/REVOKE)
 └── Phase4/
-    ├── app.py                          # Backend Flask kết nối trực tiếp MySQL 8.0
-    ├── templates/index.html            # Giao diện Web Dashboard 5 tab (FR1-FR7, BR1-BR7)
-    ├── pyproject.toml                  # Khai báo thư viện Python (Flask, PyMySQL, python-dotenv)
-    ├── .env.example                    # Mẫu cấu hình kết nối MySQL
-    ├── run_demo.bat                    # Script chạy nhanh demo trên Windows
-    ├── Presentation_and_SQL_Defense_Guide.docx  # Dàn ý 10 slide & ngân hàng câu hỏi vấn đáp SQL
-    └── Kich_Ban_Bao_Ve_DATAFORGE.docx           # Kịch bản lời thoại thuyết trình & Live Demo
+    ├── app.py                                              # Backend Flask kết nối trực tiếp MySQL 8.0
+    ├── templates/index.html                                # Giao diện Web Dashboard 5 tab (FR1-FR7, BR1-BR7)
+    ├── pyproject.toml                                      # Khai báo thư viện Python (Flask, PyMySQL, python-dotenv)
+    ├── .env.example                                        # Mẫu cấu hình kết nối MySQL
+    └── run_demo.bat                                        # Script chạy nhanh demo trên Windows
 ```
 
 ---
