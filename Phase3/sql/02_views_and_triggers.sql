@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Project #6: Supply Chain & Warehouse Logistics Network (Team DATAFORGE)
 -- Phase 3 — Script 02: Views & Triggers (Business Rules & DB Challenges)
--- Target DBMS : MySQL 8.0+
+-- Target DBMS : MySQL 8.0+ (InnoDB)
 -- =============================================================================
 
 USE supply_chain_logistics_db;
@@ -118,13 +118,13 @@ LEFT JOIN (
     ON s.shipment_id = sl_agg.shipment_id;
 
 -- =============================================================================
--- PART B: TRIGGERS (6 Triggers Enforcing BR1, BR2, BR4, BR7, FR5)
+-- PART B: TRIGGERS (16 Triggers Enforcing BR1-BR7, FR2, FR3, FR5, FR7, NFR6)
 -- =============================================================================
 
 DELIMITER $$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 1: trg_prevent_bom_cycle_insert (BR4 — Direct & Recursive Cycle Detection)
+-- TRIGGER 1a: trg_prevent_bom_cycle_insert (BR4 — Direct & Recursive Cycle Guard)
 -- Blocks both direct self-loops (A -> A) and indirect cycles (A -> B -> C -> A).
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_prevent_bom_cycle_insert
@@ -133,14 +133,11 @@ FOR EACH ROW
 BEGIN
     DECLARE v_cycle_found INT DEFAULT 0;
 
-    -- 1) Block direct self-loop (A -> A)
     IF NEW.parent_product_id = NEW.component_product_id THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'BR4 Violation: A product cannot be a direct component of itself.';
     END IF;
 
-    -- 2) Traverse descendants starting from NEW.component_product_id.
-    --    If we can reach NEW.parent_product_id, inserting this edge creates an indirect cycle.
     WITH RECURSIVE bom_descendants AS (
         SELECT
             component_product_id AS node_id,
@@ -170,9 +167,57 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 2: trg_validate_warehouse_transfer_insert (BR1 & BR2)
--- Ensures shipment_type = 'WAREHOUSE_TRANSFER', disjoint from customer_delivery,
--- and dest_warehouse_id <> origin_warehouse_id.
+-- TRIGGER 1b: trg_prevent_bom_cycle_update (BR4 — Cycle Guard on UPDATE)
+-- Prevents bypassing BR4 via UPDATE on product_component.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_prevent_bom_cycle_update
+BEFORE UPDATE ON product_component
+FOR EACH ROW
+BEGIN
+    DECLARE v_cycle_found INT DEFAULT 0;
+
+    IF NEW.parent_product_id = NEW.component_product_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR4 Violation: A product cannot be a direct component of itself.';
+    END IF;
+
+    IF NEW.parent_product_id <> OLD.parent_product_id
+       OR NEW.component_product_id <> OLD.component_product_id THEN
+        WITH RECURSIVE bom_descendants AS (
+            SELECT
+                pc.component_product_id AS node_id,
+                1 AS depth
+            FROM product_component AS pc
+            WHERE pc.parent_product_id = NEW.component_product_id
+              AND NOT (pc.parent_product_id = OLD.parent_product_id
+                       AND pc.component_product_id = OLD.component_product_id)
+
+            UNION ALL
+
+            SELECT
+                pc.component_product_id AS node_id,
+                bd.depth + 1 AS depth
+            FROM product_component AS pc
+            INNER JOIN bom_descendants AS bd
+                ON pc.parent_product_id = bd.node_id
+            WHERE bd.depth < 20
+              AND NOT (pc.parent_product_id = OLD.parent_product_id
+                       AND pc.component_product_id = OLD.component_product_id)
+        )
+        SELECT COUNT(*)
+        INTO v_cycle_found
+        FROM bom_descendants
+        WHERE node_id = NEW.parent_product_id;
+
+        IF v_cycle_found > 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'BR4 Violation: Circular dependency detected on UPDATE in product_component.';
+        END IF;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 2a: trg_validate_warehouse_transfer_insert (BR1 & BR2)
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_validate_warehouse_transfer_insert
 BEFORE INSERT ON warehouse_transfer
@@ -209,8 +254,33 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
+-- TRIGGER 2b: trg_validate_warehouse_transfer_update (BR1 & BR2 on UPDATE)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_warehouse_transfer_update
+BEFORE UPDATE ON warehouse_transfer
+FOR EACH ROW
+BEGIN
+    DECLARE v_origin_wh VARCHAR(10);
+    DECLARE v_status VARCHAR(20);
+
+    SELECT origin_warehouse_id, status
+    INTO v_origin_wh, v_status
+    FROM shipment
+    WHERE shipment_id = NEW.shipment_id;
+
+    IF v_status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot modify a Delivered warehouse transfer.';
+    END IF;
+
+    IF NEW.dest_warehouse_id = v_origin_wh THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR2 Violation: Destination warehouse cannot be the same as origin warehouse.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
 -- TRIGGER 3: trg_validate_customer_delivery_insert (BR1)
--- Ensures shipment_type = 'CUSTOMER_DELIVERY' and disjoint from warehouse_transfer.
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_validate_customer_delivery_insert
 BEFORE INSERT ON customer_delivery
@@ -241,33 +311,39 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 4: trg_check_and_deduct_inventory_on_ship (BR7 & BR3)
--- Validates available stock at origin warehouse before shipping and deducts stock.
+-- TRIGGER 4a: trg_check_and_deduct_inventory_on_ship (BR7, BR3 & NFR6 FOR UPDATE)
+-- Locks inventory row with FOR UPDATE, validates stock, and deducts atomically.
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_check_and_deduct_inventory_on_ship
 BEFORE INSERT ON shipment_line
 FOR EACH ROW
 BEGIN
     DECLARE v_origin_wh VARCHAR(10);
+    DECLARE v_ship_status VARCHAR(20);
     DECLARE v_available_qty INT UNSIGNED DEFAULT NULL;
 
-    SELECT origin_warehouse_id
-    INTO v_origin_wh
+    SELECT origin_warehouse_id, status
+    INTO v_origin_wh, v_ship_status
     FROM shipment
     WHERE shipment_id = NEW.shipment_id;
+
+    IF v_ship_status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot add items to an already Delivered shipment.';
+    END IF;
 
     SELECT quantity_on_hand
     INTO v_available_qty
     FROM inventory
     WHERE warehouse_id = v_origin_wh
-      AND product_id = NEW.product_id;
+      AND product_id = NEW.product_id
+    FOR UPDATE;
 
     IF v_available_qty IS NULL OR NEW.quantity_shipped > v_available_qty THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'BR7 Violation: Insufficient inventory quantity_on_hand at origin warehouse.';
     END IF;
 
-    -- Deduct inventory atomically (also triggers AFTER UPDATE restock check)
     UPDATE inventory
     SET quantity_on_hand = quantity_on_hand - NEW.quantity_shipped
     WHERE warehouse_id = v_origin_wh
@@ -275,9 +351,91 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
+-- TRIGGER 4b: trg_adjust_inventory_on_ship_line_update (BR7 & Anti-Leak)
+-- Adjusts origin warehouse inventory when quantity_shipped is modified before delivery.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_adjust_inventory_on_ship_line_update
+BEFORE UPDATE ON shipment_line
+FOR EACH ROW
+BEGIN
+    DECLARE v_origin_wh VARCHAR(10);
+    DECLARE v_ship_status VARCHAR(20);
+    DECLARE v_available_qty INT UNSIGNED DEFAULT NULL;
+    DECLARE v_delta INT;
+
+    SELECT origin_warehouse_id, status
+    INTO v_origin_wh, v_ship_status
+    FROM shipment
+    WHERE shipment_id = NEW.shipment_id;
+
+    IF v_ship_status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot update shipment lines after shipment is Delivered.';
+    END IF;
+
+    IF NEW.shipment_id <> OLD.shipment_id OR NEW.product_id <> OLD.product_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Integrity Violation: Cannot change shipment_id or product_id on an existing shipment_line.';
+    END IF;
+
+    SET v_delta = CAST(NEW.quantity_shipped AS SIGNED) - CAST(OLD.quantity_shipped AS SIGNED);
+
+    IF v_delta > 0 THEN
+        SELECT quantity_on_hand
+        INTO v_available_qty
+        FROM inventory
+        WHERE warehouse_id = v_origin_wh
+          AND product_id = NEW.product_id
+        FOR UPDATE;
+
+        IF v_available_qty IS NULL OR v_delta > v_available_qty THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'BR7 Violation: Insufficient inventory for increased shipment quantity.';
+        END IF;
+
+        UPDATE inventory
+        SET quantity_on_hand = quantity_on_hand - v_delta
+        WHERE warehouse_id = v_origin_wh
+          AND product_id = NEW.product_id;
+    ELSEIF v_delta < 0 THEN
+        UPDATE inventory
+        SET quantity_on_hand = quantity_on_hand + ABS(v_delta)
+        WHERE warehouse_id = v_origin_wh
+          AND product_id = NEW.product_id;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 4c: trg_restore_inventory_on_ship_line_delete (Anti-Leak on Cancel/Delete)
+-- Restores stock to origin warehouse if an undelivered shipment_line is deleted.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_restore_inventory_on_ship_line_delete
+BEFORE DELETE ON shipment_line
+FOR EACH ROW
+BEGIN
+    DECLARE v_origin_wh VARCHAR(10);
+    DECLARE v_ship_status VARCHAR(20);
+
+    SELECT origin_warehouse_id, status
+    INTO v_origin_wh, v_ship_status
+    FROM shipment
+    WHERE shipment_id = OLD.shipment_id;
+
+    IF v_ship_status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot delete shipment lines from an already Delivered shipment.';
+    END IF;
+
+    UPDATE inventory
+    SET quantity_on_hand = quantity_on_hand + OLD.quantity_shipped
+    WHERE warehouse_id = v_origin_wh
+      AND product_id = OLD.product_id;
+END$$
+
+-- -----------------------------------------------------------------------------
 -- TRIGGER 5: trg_auto_restock_po_on_low_inventory (FR5 & DB Challenge)
--- Automatically creates a Pending restock Purchase Order + PO Line when
--- quantity_on_hand drops below product.reorder_level (without duplicate POs).
+-- Automatically creates a Pending restock Purchase Order + PO Line whenever
+-- quantity_on_hand decreases and is below reorder_level (with duplicate-PO guard).
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_auto_restock_po_on_low_inventory
 AFTER UPDATE ON inventory
@@ -297,11 +455,11 @@ BEGIN
     FROM product
     WHERE product_id = NEW.product_id;
 
-    -- Fire only when inventory crosses below reorder_level
+    -- Fire whenever stock drops and is below reorder_level (even if already below)
     IF NEW.quantity_on_hand < v_reorder_level
-       AND OLD.quantity_on_hand >= v_reorder_level THEN
+       AND NEW.quantity_on_hand < OLD.quantity_on_hand THEN
 
-        -- Avoid duplicate open restock POs for the same (warehouse, product)
+        -- Prevent duplicate open restock POs for the same (warehouse, product)
         SELECT COUNT(*)
         INTO v_open_po_count
         FROM purchase_order AS po
@@ -312,7 +470,6 @@ BEGIN
           AND po.status IN ('Pending', 'Approved', 'Ordered');
 
         IF v_open_po_count = 0 THEN
-            -- Pick cheapest supplier (tie-break by fastest lead time)
             SELECT supplier_id, supply_cost, lead_time_days
             INTO v_best_supplier, v_best_cost, v_best_lead
             FROM supplier_product
@@ -323,7 +480,8 @@ BEGIN
             IF v_best_supplier IS NOT NULL THEN
                 SELECT COALESCE(MAX(CAST(SUBSTRING(po_id, 4) AS UNSIGNED)), 0) + 1
                 INTO v_next_po_num
-                FROM purchase_order;
+                FROM purchase_order
+                FOR UPDATE;
 
                 SET v_new_po_id = CONCAT('PO-', LPAD(v_next_po_num, 6, '0'));
 
@@ -347,9 +505,74 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 6: trg_transfer_delivered_add_dest_inventory (FR3 & FR7)
--- When a WAREHOUSE_TRANSFER shipment transitions to 'Delivered', automatically
--- credits the shipped quantities into the destination warehouse's inventory.
+-- TRIGGER 6a: trg_enforce_initial_shipment_status (Prevents bypassing Delivery trigger)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_enforce_initial_shipment_status
+BEFORE INSERT ON shipment
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: New shipment cannot be inserted directly as Delivered; create as Pending/In Transit first.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 6b: trg_validate_shipment_update (State Machine + BR1/BR2 + Anti-Leak)
+-- Blocks reverting Delivered status, changing shipment_type, or changing
+-- origin_warehouse_id after shipment_lines have been added.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_shipment_update
+BEFORE UPDATE ON shipment
+FOR EACH ROW
+BEGIN
+    DECLARE v_dest_wh VARCHAR(10) DEFAULT NULL;
+    DECLARE v_line_count INT DEFAULT 0;
+
+    IF NEW.shipment_type <> OLD.shipment_type THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Cannot change shipment_type after shipment creation.';
+    END IF;
+
+    IF NEW.origin_warehouse_id <> OLD.origin_warehouse_id THEN
+        SELECT COUNT(*) INTO v_line_count
+        FROM shipment_line
+        WHERE shipment_id = NEW.shipment_id;
+
+        IF v_line_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Integrity Violation: Cannot change origin_warehouse_id after shipment_lines exist.';
+        END IF;
+    END IF;
+
+    -- Monotonic state machine: Pending -> In Transit -> Delivered (no backward transition)
+    IF OLD.status = 'Delivered' AND NEW.status <> 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot revert a Delivered shipment back to Pending or In Transit.';
+    END IF;
+
+    IF OLD.status = 'In Transit' AND NEW.status = 'Pending' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot revert an In Transit shipment back to Pending.';
+    END IF;
+
+    IF NEW.shipment_type = 'WAREHOUSE_TRANSFER'
+       AND NEW.origin_warehouse_id <> OLD.origin_warehouse_id THEN
+        SELECT dest_warehouse_id
+        INTO v_dest_wh
+        FROM warehouse_transfer
+        WHERE shipment_id = NEW.shipment_id;
+
+        IF v_dest_wh IS NOT NULL AND NEW.origin_warehouse_id = v_dest_wh THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'BR2 Violation: Origin warehouse cannot be set equal to destination warehouse.';
+        END IF;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 6c: trg_transfer_delivered_add_dest_inventory (FR3 & FR7)
+-- Credits destination warehouse inventory when WAREHOUSE_TRANSFER -> Delivered.
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_transfer_delivered_add_dest_inventory
 AFTER UPDATE ON shipment
@@ -377,6 +600,82 @@ BEGIN
             ON DUPLICATE KEY UPDATE
                 quantity_on_hand = inventory.quantity_on_hand + VALUES(quantity_on_hand);
         END IF;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 6d: trg_restore_inventory_on_shipment_delete (Anti-Leak on Cascade Delete)
+-- Because MySQL FK ON DELETE CASCADE does not fire child triggers on shipment_line,
+-- this trigger restores origin inventory before an undelivered shipment is deleted,
+-- and blocks deleting an already Delivered shipment to preserve audit history.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_restore_inventory_on_shipment_delete
+BEFORE DELETE ON shipment
+FOR EACH ROW
+BEGIN
+    IF OLD.status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot delete an already Delivered shipment.';
+    END IF;
+
+    UPDATE inventory AS i
+    INNER JOIN shipment_line AS sl
+        ON sl.product_id = i.product_id
+    SET i.quantity_on_hand = i.quantity_on_hand + sl.quantity_shipped
+    WHERE sl.shipment_id = OLD.shipment_id
+      AND i.warehouse_id = OLD.origin_warehouse_id;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 7a: trg_enforce_initial_po_status (Prevents bypassing PO Receive trigger)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_enforce_initial_po_status
+BEFORE INSERT ON purchase_order
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Received' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: New purchase order cannot be inserted directly as Received; create as Pending/Approved/Ordered first.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 7b: trg_validate_po_update (PO State Machine — Prevents Double-Receiving)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_po_update
+BEFORE UPDATE ON purchase_order
+FOR EACH ROW
+BEGIN
+    IF OLD.status = 'Received' AND NEW.status <> 'Received' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot revert a Received purchase order.';
+    END IF;
+
+    IF OLD.status = 'Cancelled' AND NEW.status <> 'Cancelled' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot reactivate a Cancelled purchase order.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 7c: trg_po_received_add_inventory (Closes the Restock Loop — FR2 & FR5)
+-- When a Purchase Order transitions to 'Received', automatically credits all
+-- po_line quantities into the receiving warehouse's inventory!
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_po_received_add_inventory
+AFTER UPDATE ON purchase_order
+FOR EACH ROW
+BEGIN
+    IF NEW.status = 'Received' AND OLD.status <> 'Received' THEN
+        INSERT INTO inventory (warehouse_id, product_id, quantity_on_hand)
+        SELECT
+            NEW.warehouse_id,
+            pol.product_id,
+            pol.quantity_ordered
+        FROM po_line AS pol
+        WHERE pol.po_id = NEW.po_id
+        ON DUPLICATE KEY UPDATE
+            quantity_on_hand = inventory.quantity_on_hand + VALUES(quantity_on_hand);
     END IF;
 END$$
 

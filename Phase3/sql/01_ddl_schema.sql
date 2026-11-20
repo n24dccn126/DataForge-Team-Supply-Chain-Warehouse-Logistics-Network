@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Project #6: Supply Chain & Warehouse Logistics Network (Team DATAFORGE)
 -- Phase 3 — Script 01: DDL Schema (Tables, Constraints & Secondary Indexes)
--- Target DBMS : MySQL 8.0+ / MariaDB 10.5+
+-- Target DBMS : MySQL 8.0+ (InnoDB)
 -- Style Guide : SQLStyle.guide / Google SQL Style Guide (lowercase snake_case)
 -- =============================================================================
 

@@ -83,6 +83,42 @@ START TRANSACTION;
       AND po.status = 'Pending';
 ROLLBACK;
 
+-- TC11: Bypassing BR4 via UPDATE on product_component (Expected: ERROR 1644 — Trigger 1b)
+-- UPDATE product_component SET component_product_id = parent_product_id
+-- WHERE parent_product_id = 'PRD-000006' AND component_product_id = 'PRD-000007';
+
+-- TC12: Reverting a Delivered shipment back to Pending (Expected: ERROR 1644 — Trigger 6b)
+-- UPDATE shipment SET status = 'Pending' WHERE shipment_id = 'SHP-000001';
+
+-- TC13: Inserting a new shipment directly as 'Delivered' (Expected: ERROR 1644 — Trigger 6a)
+-- INSERT INTO shipment (shipment_id, origin_warehouse_id, carrier_name, status, shipment_type)
+-- VALUES ('SHP-999902', 'WH-000001', 'Test Fleet', 'Delivered', 'CUSTOMER_DELIVERY');
+
+-- TC14: Deleting an undelivered shipment restores origin inventory (Positive Test — Trigger 6d)
+START TRANSACTION;
+    SELECT quantity_on_hand AS before_delete FROM inventory
+    WHERE warehouse_id = 'WH-000001' AND product_id = 'PRD-000001';
+
+    DELETE FROM shipment WHERE shipment_id = 'SHP-000003'; -- Pending transfer of 8x PRD-000001
+
+    SELECT quantity_on_hand AS after_delete_restored_plus_8 FROM inventory
+    WHERE warehouse_id = 'WH-000001' AND product_id = 'PRD-000001';
+ROLLBACK;
+
+-- TC15: Receiving a Purchase Order credits receiving warehouse inventory (Positive Test — Trigger 7c)
+START TRANSACTION;
+    SELECT quantity_on_hand AS before_po_receive FROM inventory
+    WHERE warehouse_id = 'WH-000005' AND product_id = 'PRD-000011';
+
+    UPDATE purchase_order SET status = 'Received' WHERE po_id = 'PO-000003'; -- +600x PRD-000011
+
+    SELECT quantity_on_hand AS after_po_receive_plus_600 FROM inventory
+    WHERE warehouse_id = 'WH-000005' AND product_id = 'PRD-000011';
+ROLLBACK;
+
+-- TC16: Reverting a Received PO back to Ordered (Expected: ERROR 1644 — Trigger 7b)
+-- UPDATE purchase_order SET status = 'Ordered' WHERE po_id = 'PO-000001';
+
 
 -- =============================================================================
 -- SECTION 5.2: ROLE-BASED ACCESS CONTROL (RBAC — MySQL 8.0 Roles)
@@ -154,12 +190,12 @@ GRANT SELECT ON supply_chain_logistics_db.v_restock_alerts TO 'role_auditor_read
 GRANT SELECT ON supply_chain_logistics_db.v_warehouse_inventory_summary TO 'role_auditor_readonly';
 GRANT SELECT ON supply_chain_logistics_db.v_shipment_tracking_overview TO 'role_auditor_readonly';
 
--- 3. Example User Accounts & Role Assignment + Explicit REVOKE Demonstration
-CREATE USER IF NOT EXISTS 'wh_mgr_hcm'@'localhost' IDENTIFIED BY 'StrongPwd_WhMgr#2026';
-CREATE USER IF NOT EXISTS 'buyer_01'@'localhost'   IDENTIFIED BY 'StrongPwd_Buyer#2026';
-CREATE USER IF NOT EXISTS 'staff_01'@'localhost'   IDENTIFIED BY 'StrongPwd_Staff#2026';
-CREATE USER IF NOT EXISTS 'pm_01'@'localhost'      IDENTIFIED BY 'StrongPwd_PM#2026';
-CREATE USER IF NOT EXISTS 'auditor_01'@'localhost' IDENTIFIED BY 'StrongPwd_Audit#2026';
+-- 3. Example User Accounts & Role Assignment (Replace placeholders before production!)
+CREATE USER IF NOT EXISTS 'wh_mgr_hcm'@'localhost' IDENTIFIED BY '<CHANGE_ME_WHMGR_PWD>';
+CREATE USER IF NOT EXISTS 'buyer_01'@'localhost'   IDENTIFIED BY '<CHANGE_ME_BUYER_PWD>';
+CREATE USER IF NOT EXISTS 'staff_01'@'localhost'   IDENTIFIED BY '<CHANGE_ME_STAFF_PWD>';
+CREATE USER IF NOT EXISTS 'pm_01'@'localhost'      IDENTIFIED BY '<CHANGE_ME_PM_PWD>';
+CREATE USER IF NOT EXISTS 'auditor_01'@'localhost' IDENTIFIED BY '<CHANGE_ME_AUDIT_PWD>';
 
 GRANT 'role_warehouse_manager' TO 'wh_mgr_hcm'@'localhost';
 GRANT 'role_purchasing_staff'  TO 'buyer_01'@'localhost';

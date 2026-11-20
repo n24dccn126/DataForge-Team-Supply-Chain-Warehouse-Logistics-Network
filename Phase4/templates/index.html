@@ -286,16 +286,15 @@
     <!-- TAB 4: PROCUREMENT -->
     <section id="tab-procurement" class="tab">
       <div class="card">
-        <h2>Create Purchase Order — Dat hang Nha cung cap (FR2 &amp; BR5)</h2>
+        <h2>Create Purchase Order — Dat hang Nha cung cap nhieu dong (FR2 &amp; BR5)</h2>
         <div class="controls">
           <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect"></select></div>
           <div class="field"><label>Receiving Warehouse</label><select id="poWhSelect"></select></div>
-          <div class="field"><label>Product</label><select id="poProdSelect"></select></div>
-          <div class="field"><label>Quantity</label><input id="poQty" type="number" value="50" min="1" style="width:90px" /></div>
-          <div class="field"><label>Unit Cost ($)</label><input id="poCost" type="number" value="25.00" step="0.5" min="0.01" style="width:105px" /></div>
           <div class="field"><label>Expected Date</label><input id="poDate" type="date" value="2026-12-01" /></div>
-          <button class="btn" onclick="createPO()">Create PO</button>
+          <button class="btn btn-sm" type="button" onclick="addPoDraftRow()">+ Add Product Line</button>
+          <button class="btn" type="button" onclick="createPO()">Create PO</button>
         </div>
+        <div id="poLinesWrap"></div>
       </div>
 
       <div class="card">
@@ -303,11 +302,14 @@
           <span>Purchase Orders (Includes Auto-Generated Restock POs from Trigger FR5)</span>
           <button class="btn btn-sm" onclick="loadProcurement()">Refresh</button>
         </h2>
+        <p class="hint">
+          Demo Tip: Bam <b>Mark Received</b> tren mot don PO de kich hoat <b>Trigger 7b</b> tu dong cong ton kho vao kho nhan (khep kin vong restock)!
+        </p>
         <table>
           <thead>
             <tr>
               <th>PO ID</th><th>Supplier</th><th>Warehouse</th><th>Order Date</th>
-              <th>Expected Delivery</th><th>Lines</th><th>Total ($)</th><th>Status</th>
+              <th>Expected Delivery</th><th>Lines</th><th>Total ($)</th><th>Status</th><th>Action</th>
             </tr>
           </thead>
           <tbody id="poBody"></tbody>
@@ -432,33 +434,67 @@
       }
     }
 
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
+    function parseStrictNumber(raw, label) {
+      if (raw === '' || raw === null || raw === undefined) {
+        showToast(`${label} cannot be empty.`, false);
+        return null;
+      }
+      const n = Number(raw);
+      if (Number.isNaN(n)) {
+        showToast(`${label} must be a valid number.`, false);
+        return null;
+      }
+      return n;
+    }
+
+    let cachedProdOpts = '';
+
+    function addPoDraftRow() {
+      const wrap = document.getElementById('poLinesWrap');
+      const row = document.createElement('div');
+      row.className = 'controls po-draft-row';
+      row.style.marginBottom = '8px';
+      row.innerHTML = `
+        <div class="field"><label>Product</label><select class="po-line-prod">${cachedProdOpts}</select></div>
+        <div class="field"><label>Quantity</label><input class="po-line-qty" type="number" value="50" min="1" style="width:90px" /></div>
+        <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="25.00" step="0.5" min="0.01" style="width:105px" /></div>
+        <button class="btn btn-sm btn-warn" type="button" onclick="this.parentElement.remove()">Remove</button>
+      `;
+      wrap.appendChild(row);
+    }
+
     async function loadMeta() {
       const res = await fetch('/api/products');
       const data = await res.json();
       if (!data.ok) return;
-      const whOpts = data.warehouses.map(w => `<option value="${w.warehouse_id}">${w.warehouse_id} — ${w.name}</option>`).join('');
+      const whOpts = data.warehouses.map(w => `<option value="${esc(w.warehouse_id)}">${esc(w.warehouse_id)} — ${esc(w.name)}</option>`).join('');
       document.getElementById('invWhFilter').innerHTML = '<option value="">All Warehouses</option>' + whOpts;
       document.getElementById('bomWhSelect').innerHTML = whOpts;
       document.getElementById('poWhSelect').innerHTML = whOpts;
       document.getElementById('shOrigWh').innerHTML = whOpts;
       document.getElementById('shDestWh').innerHTML = whOpts;
 
-      const supOpts = data.suppliers.map(s => `<option value="${s.supplier_id}">${s.supplier_id} — ${s.name}</option>`).join('');
+      const supOpts = data.suppliers.map(s => `<option value="${esc(s.supplier_id)}">${esc(s.supplier_id)} — ${esc(s.name)}</option>`).join('');
       document.getElementById('poSupSelect').innerHTML = supOpts;
 
-      const custOpts = (data.customers || []).map(c => `<option value="${c.customer_id}">${c.customer_id} — ${c.name}</option>`).join('');
+      const custOpts = (data.customers || []).map(c => `<option value="${esc(c.customer_id)}">${esc(c.customer_id)} — ${esc(c.name)}</option>`).join('');
       document.getElementById('shCust').innerHTML = custOpts;
 
-      const prodOpts = data.products.map(p => `<option value="${p.product_id}">${p.product_id} — ${p.name}</option>`).join('');
-      document.getElementById('bomProductSelect').innerHTML = prodOpts;
-      document.getElementById('addBomParent').innerHTML = prodOpts;
-      document.getElementById('addBomChild').innerHTML = prodOpts;
-      document.getElementById('slProdId').innerHTML = prodOpts;
-      document.getElementById('poProdSelect').innerHTML = prodOpts;
-      document.getElementById('shProd').innerHTML = prodOpts;
-      // Default cycle test values: PRD-000007 -> PRD-000001
+      cachedProdOpts = data.products.map(p => `<option value="${esc(p.product_id)}">${esc(p.product_id)} — ${esc(p.name)}</option>`).join('');
+      document.getElementById('bomProductSelect').innerHTML = cachedProdOpts;
+      document.getElementById('addBomParent').innerHTML = cachedProdOpts;
+      document.getElementById('addBomChild').innerHTML = cachedProdOpts;
+      document.getElementById('slProdId').innerHTML = cachedProdOpts;
+      document.getElementById('shProd').innerHTML = cachedProdOpts;
       document.getElementById('addBomParent').value = 'PRD-000007';
       document.getElementById('addBomChild').value = 'PRD-000001';
+
+      document.getElementById('poLinesWrap').innerHTML = '';
+      addPoDraftRow();
     }
 
     async function loadDashboard() {
@@ -467,44 +503,44 @@
       if (!data.ok) return showToast(data.error, false);
       const k = data.kpis;
       document.getElementById('kpiGrid').innerHTML = `
-        <div class="kpi"><div class="label">Warehouses</div><div class="val">${k.total_warehouses}</div></div>
-        <div class="kpi"><div class="label">Catalog Products</div><div class="val">${k.total_products}</div></div>
+        <div class="kpi"><div class="label">Warehouses</div><div class="val">${esc(k.total_warehouses)}</div></div>
+        <div class="kpi"><div class="label">Catalog Products</div><div class="val">${esc(k.total_products)}</div></div>
         <div class="kpi"><div class="label">Total Stock Value</div><div class="val">$${fmt(k.total_stock_value)}</div></div>
-        <div class="kpi alert"><div class="label">Active Restock Alerts</div><div class="val">${k.active_alerts}</div></div>
-        <div class="kpi"><div class="label">Shipments In Transit</div><div class="val">${k.in_transit_shipments}</div></div>
+        <div class="kpi alert"><div class="label">Active Restock Alerts</div><div class="val">${esc(k.active_alerts)}</div></div>
+        <div class="kpi"><div class="label">Shipments In Transit</div><div class="val">${esc(k.in_transit_shipments)}</div></div>
       `;
       document.getElementById('alertsBody').innerHTML = data.alerts.map(a => `
         <tr>
-          <td class="mono">${a.warehouse_id}<br/><small style="color:var(--muted)">${a.warehouse_name}</small></td>
-          <td><b>${a.product_id}</b> — ${a.product_name}</td>
-          <td><span class="badge b-err">${a.quantity_on_hand}</span></td>
-          <td>${a.reorder_level}</td>
-          <td><b>-${a.shortage_qty}</b></td>
-          <td>${a.recommended_order_qty}</td>
-          <td>${a.recommended_supplier_name || '-'}</td>
+          <td class="mono">${esc(a.warehouse_id)}<br/><small style="color:var(--muted)">${esc(a.warehouse_name)}</small></td>
+          <td><b>${esc(a.product_id)}</b> — ${esc(a.product_name)}</td>
+          <td><span class="badge b-err">${esc(a.quantity_on_hand)}</span></td>
+          <td>${esc(a.reorder_level)}</td>
+          <td><b>-${esc(a.shortage_qty)}</b></td>
+          <td>${esc(a.recommended_order_qty)}</td>
+          <td>${esc(a.recommended_supplier_name || '-')}</td>
           <td>$${fmt(a.best_unit_cost)}</td>
-          <td><span class="badge ${a.procurement_status === 'Open PO Exists' ? 'b-info' : 'b-warn'}">${a.procurement_status}</span></td>
+          <td><span class="badge ${a.procurement_status === 'Open PO Exists' ? 'b-info' : 'b-warn'}">${esc(a.procurement_status)}</span></td>
         </tr>
       `).join('') || '<tr><td colspan="9">All stock levels are healthy.</td></tr>';
 
       document.getElementById('whSummaryBody').innerHTML = data.warehouses.map(w => `
         <tr>
-          <td class="mono">${w.warehouse_id}</td>
-          <td><b>${w.warehouse_name}</b></td>
-          <td>${w.manager}</td>
-          <td>${w.distinct_skus}</td>
+          <td class="mono">${esc(w.warehouse_id)}</td>
+          <td><b>${esc(w.warehouse_name)}</b></td>
+          <td>${esc(w.manager)}</td>
+          <td>${esc(w.distinct_skus)}</td>
           <td>${Number(w.total_units_in_stock).toLocaleString()}</td>
           <td>${Number(w.capacity).toLocaleString()}</td>
-          <td>${w.utilization_pct}%</td>
+          <td>${esc(w.utilization_pct)}%</td>
           <td>$${fmt(w.total_stock_value)}</td>
-          <td><span class="badge ${w.low_stock_sku_count > 0 ? 'b-warn' : 'b-ok'}">${w.low_stock_sku_count}</span></td>
+          <td><span class="badge ${w.low_stock_sku_count > 0 ? 'b-warn' : 'b-ok'}">${esc(w.low_stock_sku_count)}</span></td>
         </tr>
       `).join('');
     }
 
     async function loadInventory() {
       const wh = document.getElementById('invWhFilter').value;
-      const res = await fetch('/api/inventory' + (wh ? `?warehouse_id=${wh}` : ''));
+      const res = await fetch('/api/inventory' + (wh ? `?warehouse_id=${encodeURIComponent(wh)}` : ''));
       const data = await res.json();
       if (!data.ok) return showToast(data.error, false);
       document.getElementById('invBody').innerHTML = data.items.map(r => {
@@ -512,15 +548,15 @@
         const inputId = `qty_${r.warehouse_id}_${r.product_id}`;
         return `
           <tr>
-            <td class="mono">${r.warehouse_id}<br/><small style="color:var(--muted)">${r.warehouse_name}</small></td>
-            <td><b>${r.product_id}</b> — ${r.product_name}</td>
-            <td>${r.category}</td>
-            <td><span class="badge ${low ? 'b-err' : 'b-ok'}">${r.quantity_on_hand}</span></td>
-            <td>${r.reorder_level}</td>
-            <td class="mono">${r.last_updated}</td>
+            <td class="mono">${esc(r.warehouse_id)}<br/><small style="color:var(--muted)">${esc(r.warehouse_name)}</small></td>
+            <td><b>${esc(r.product_id)}</b> — ${esc(r.product_name)}</td>
+            <td>${esc(r.category)}</td>
+            <td><span class="badge ${low ? 'b-err' : 'b-ok'}">${esc(r.quantity_on_hand)}</span></td>
+            <td>${esc(r.reorder_level)}</td>
+            <td class="mono">${esc(r.last_updated)}</td>
             <td>
-              <input id="${inputId}" type="number" value="${r.quantity_on_hand}" style="width:85px" />
-              <button class="btn btn-sm" onclick="updateStock('${r.warehouse_id}','${r.product_id}','${inputId}')">Save</button>
+              <input id="${esc(inputId)}" type="number" value="${esc(r.quantity_on_hand)}" style="width:85px" />
+              <button class="btn btn-sm" onclick="updateStock('${esc(r.warehouse_id)}','${esc(r.product_id)}','${esc(inputId)}')">Save</button>
             </td>
           </tr>
         `;
@@ -528,7 +564,8 @@
     }
 
     async function updateStock(whId, prodId, inputId) {
-      const val = Number(document.getElementById(inputId).value);
+      const val = parseStrictNumber(document.getElementById(inputId).value.trim(), 'Quantity');
+      if (val === null) return;
       const res = await fetch('/api/inventory/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -542,7 +579,7 @@
     async function loadBom() {
       const prodId = document.getElementById('bomProductSelect').value || 'PRD-000001';
       const whId = document.getElementById('bomWhSelect').value || 'WH-000001';
-      const res = await fetch(`/api/bom/${prodId}?warehouse_id=${whId}`);
+      const res = await fetch(`/api/bom/${encodeURIComponent(prodId)}?warehouse_id=${encodeURIComponent(whId)}`);
       const data = await res.json();
       if (!data.ok) return showToast(data.error, false);
 
@@ -550,8 +587,8 @@
       if (data.feasibility.length > 0) {
         const bottleneck = data.feasibility[0];
         banner.innerHTML = `<span class="badge b-info" style="font-size:0.86rem;padding:6px 12px;">
-          Q10 Assembly Feasibility at ${whId}: Max Buildable = <b>${data.max_buildable} units</b>
-          (Bottleneck: ${bottleneck.raw_component_name} — ${bottleneck.stock_available} in stock / ${bottleneck.required_per_unit} needed per unit)
+          Q10 Assembly Feasibility at ${esc(whId)}: Max Buildable = <b>${esc(data.max_buildable)} units</b>
+          (Bottleneck: ${esc(bottleneck.raw_component_name)} — ${esc(bottleneck.stock_available)} in stock / ${esc(bottleneck.required_per_unit)} needed per unit)
         </span>`;
       } else {
         banner.innerHTML = `<span class="badge b-ok">Raw component (no sub-components in BOM).</span>`;
@@ -559,12 +596,12 @@
 
       document.getElementById('bomBody').innerHTML = data.bom.map(r => `
         <tr>
-          <td><span class="badge b-info">Level ${r.bom_level}</span></td>
-          <td class="mono">${r.bom_path}</td>
-          <td><b>${r.product_id}</b> — ${r.component_name}</td>
-          <td>${r.category}</td>
-          <td>${r.qty_per_parent}</td>
-          <td><b>${r.total_qty_needed}</b></td>
+          <td><span class="badge b-info">Level ${esc(r.bom_level)}</span></td>
+          <td class="mono">${esc(r.bom_path)}</td>
+          <td><b>${esc(r.product_id)}</b> — ${esc(r.component_name)}</td>
+          <td>${esc(r.category)}</td>
+          <td>${esc(r.qty_per_parent)}</td>
+          <td><b>${esc(r.total_qty_needed)}</b></td>
           <td>$${fmt(r.unit_price)}</td>
           <td>$${fmt(r.extended_value)}</td>
         </tr>
@@ -574,7 +611,8 @@
     async function addBomLink() {
       const parent_product_id = document.getElementById('addBomParent').value;
       const component_product_id = document.getElementById('addBomChild').value;
-      const quantity_required = Number(document.getElementById('addBomQty').value);
+      const quantity_required = parseStrictNumber(document.getElementById('addBomQty').value.trim(), 'Quantity Required');
+      if (quantity_required === null) return;
       const res = await fetch('/api/bom/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -589,58 +627,84 @@
       const res = await fetch('/api/procurement');
       const data = await res.json();
       if (!data.ok) return showToast(data.error, false);
-      document.getElementById('poBody').innerHTML = data.purchase_orders.map(p => `
-        <tr>
-          <td class="mono"><b>${p.po_id}</b></td>
-          <td>${p.supplier_name}</td>
-          <td>${p.warehouse_name}</td>
-          <td class="mono">${p.order_date}</td>
-          <td class="mono">${p.expected_delivery_date || '-'}</td>
-          <td>${p.line_count}</td>
-          <td>$${fmt(p.total_amount)}</td>
-          <td><span class="badge ${p.status === 'Received' ? 'b-ok' : (p.status === 'Cancelled' ? 'b-err' : 'b-warn')}">${p.status}</span></td>
-        </tr>
-      `).join('');
+      document.getElementById('poBody').innerHTML = data.purchase_orders.map(p => {
+        const canReceive = !['Received', 'Cancelled'].includes(p.status);
+        return `
+          <tr>
+            <td class="mono"><b>${esc(p.po_id)}</b></td>
+            <td>${esc(p.supplier_name)}</td>
+            <td>${esc(p.warehouse_name)}</td>
+            <td class="mono">${esc(p.order_date)}</td>
+            <td class="mono">${esc(p.expected_delivery_date || '-')}</td>
+            <td>${esc(p.line_count)}</td>
+            <td>$${fmt(p.total_amount)}</td>
+            <td><span class="badge ${p.status === 'Received' ? 'b-ok' : (p.status === 'Cancelled' ? 'b-err' : 'b-warn')}">${esc(p.status)}</span></td>
+            <td>
+              ${canReceive
+                ? `<button class="btn btn-sm" onclick="updatePoStatus('${esc(p.po_id)}','Received')">Mark Received</button>`
+                : '<small style="color:var(--muted)">Closed</small>'}
+            </td>
+          </tr>
+        `;
+      }).join('');
 
       document.getElementById('supCatBody').innerHTML = data.supplier_catalog.map(c => `
         <tr>
-          <td class="mono">${c.product_id}</td>
-          <td>${c.product_name}</td>
-          <td>${c.supplier_name}</td>
+          <td class="mono">${esc(c.product_id)}</td>
+          <td>${esc(c.product_name)}</td>
+          <td>${esc(c.supplier_name)}</td>
           <td><b>$${fmt(c.supply_cost)}</b></td>
-          <td>${c.lead_time_days} days</td>
+          <td>${esc(c.lead_time_days)} days</td>
         </tr>
       `).join('');
+    }
+
+    async function updatePoStatus(poId, status) {
+      const res = await fetch('/api/procurement/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ po_id: poId, status })
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadProcurement();
     }
 
     async function loadShipments() {
       const res = await fetch('/api/shipments');
       const data = await res.json();
       if (!data.ok) return showToast(data.error, false);
-      document.getElementById('shipBody').innerHTML = data.shipments.map(s => `
-        <tr>
-          <td class="mono"><b>${s.shipment_id}</b></td>
-          <td><span class="badge ${s.shipment_type === 'WAREHOUSE_TRANSFER' ? 'b-info' : 'b-ok'}">${s.shipment_type}</span></td>
-          <td>${s.origin_warehouse_name}</td>
-          <td>${s.destination_name || '-'}</td>
-          <td>${s.carrier_name}</td>
-          <td>${s.total_units_shipped}</td>
-          <td class="mono">${s.ship_date}</td>
-          <td><span class="badge ${s.status === 'Delivered' ? 'b-ok' : 'b-warn'}">${s.status}</span></td>
-          <td>
-            ${s.status !== 'Delivered'
-              ? `<button class="btn btn-sm" onclick="markDelivered('${s.shipment_id}')">Mark Delivered</button>`
-              : '<small style="color:var(--muted)">Completed</small>'}
-          </td>
-        </tr>
-      `).join('');
+      document.getElementById('shipBody').innerHTML = data.shipments.map(s => {
+        let actions = '<small style="color:var(--muted)">Completed</small>';
+        if (s.status === 'Pending') {
+          actions = `
+            <button class="btn btn-sm btn-warn" onclick="updateShipmentStatus('${esc(s.shipment_id)}','In Transit')">Start Transit</button>
+            <button class="btn btn-sm" onclick="updateShipmentStatus('${esc(s.shipment_id)}','Delivered')">Mark Delivered</button>
+          `;
+        } else if (s.status === 'In Transit') {
+          actions = `<button class="btn btn-sm" onclick="updateShipmentStatus('${esc(s.shipment_id)}','Delivered')">Mark Delivered</button>`;
+        }
+        return `
+          <tr>
+            <td class="mono"><b>${esc(s.shipment_id)}</b></td>
+            <td><span class="badge ${s.shipment_type === 'WAREHOUSE_TRANSFER' ? 'b-info' : 'b-ok'}">${esc(s.shipment_type)}</span></td>
+            <td>${esc(s.origin_warehouse_name)}</td>
+            <td>${esc(s.destination_name || '-')}</td>
+            <td>${esc(s.carrier_name)}</td>
+            <td>${esc(s.total_units_shipped)}</td>
+            <td class="mono">${esc(s.ship_date)}</td>
+            <td><span class="badge ${s.status === 'Delivered' ? 'b-ok' : 'b-warn'}">${esc(s.status)}</span></td>
+            <td>${actions}</td>
+          </tr>
+        `;
+      }).join('');
     }
 
-    async function markDelivered(shipmentId) {
+    async function updateShipmentStatus(shipmentId, status) {
       const res = await fetch('/api/shipments/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shipment_id: shipmentId, status: 'Delivered' })
+        body: JSON.stringify({ shipment_id: shipmentId, status })
       });
       const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
@@ -648,13 +712,24 @@
     }
 
     async function createPO() {
+      const rowEls = Array.from(document.querySelectorAll('#poLinesWrap .po-draft-row'));
+      if (rowEls.length === 0) return showToast('Please add at least one product line.', false);
+      const lines = [];
+      for (const el of rowEls) {
+        const qty = parseStrictNumber(el.querySelector('.po-line-qty').value.trim(), 'Quantity');
+        const cost = parseStrictNumber(el.querySelector('.po-line-cost').value.trim(), 'Unit Cost');
+        if (qty === null || cost === null) return;
+        lines.push({
+          product_id: el.querySelector('.po-line-prod').value,
+          quantity_ordered: qty,
+          unit_cost: cost,
+        });
+      }
       const payload = {
         supplier_id: document.getElementById('poSupSelect').value,
         warehouse_id: document.getElementById('poWhSelect').value,
-        product_id: document.getElementById('poProdSelect').value,
-        quantity_ordered: Number(document.getElementById('poQty').value),
-        unit_cost: Number(document.getElementById('poCost').value),
         expected_delivery_date: document.getElementById('poDate').value || null,
+        lines,
       };
       const res = await fetch('/api/procurement/create-po', {
         method: 'POST',
@@ -673,6 +748,8 @@
     }
 
     async function createShipment() {
+      const quantity_shipped = parseStrictNumber(document.getElementById('shQty').value.trim(), 'Quantity');
+      if (quantity_shipped === null) return;
       const payload = {
         shipment_type: document.getElementById('shType').value,
         origin_warehouse_id: document.getElementById('shOrigWh').value,
@@ -680,7 +757,7 @@
         customer_id: document.getElementById('shCust').value,
         carrier_name: document.getElementById('shCarrier').value,
         product_id: document.getElementById('shProd').value,
-        quantity_shipped: Number(document.getElementById('shQty').value),
+        quantity_shipped,
       };
       const res = await fetch('/api/shipments/create', {
         method: 'POST',
@@ -695,7 +772,8 @@
     async function addShipmentLine() {
       const shipment_id = document.getElementById('slShipId').value.trim();
       const product_id = document.getElementById('slProdId').value;
-      const quantity_shipped = Number(document.getElementById('slQty').value);
+      const quantity_shipped = parseStrictNumber(document.getElementById('slQty').value.trim(), 'Quantity Shipped');
+      if (quantity_shipped === null) return;
       const res = await fetch('/api/shipments/add-line', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

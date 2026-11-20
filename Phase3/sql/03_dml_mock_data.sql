@@ -101,7 +101,7 @@ INSERT INTO supplier_product (supplier_id, product_id, supply_cost, lead_time_da
     ('SUP-000003', 'PRD-000002', 3600.00, 14);
 
 -- -----------------------------------------------------------------------------
--- 7. INVENTORY (22 Rows across 5 Warehouses — Several Below ReorderLevel for FR5)
+-- 7. INVENTORY (24 Rows across 5 Warehouses — Several Below ReorderLevel for FR5)
 -- -----------------------------------------------------------------------------
 INSERT INTO inventory (warehouse_id, product_id, quantity_on_hand) VALUES
     -- WH-000001 (TP.HCM — Main Assembly Hub)
@@ -136,10 +136,12 @@ INSERT INTO inventory (warehouse_id, product_id, quantity_on_hand) VALUES
 
 -- -----------------------------------------------------------------------------
 -- 8. PURCHASE_ORDER & 9. PO_LINE (6 POs, 11 Lines — Inserted before Shipments)
+-- Note: PO-000001 & PO-000002 are inserted as 'Ordered', lines added, then
+--       transitioned to 'Received' so Trigger 7a & 7c work cleanly!
 -- -----------------------------------------------------------------------------
 INSERT INTO purchase_order (po_id, supplier_id, warehouse_id, order_date, expected_delivery_date, status) VALUES
-    ('PO-000001', 'SUP-000001', 'WH-000001', '2026-09-10', '2026-09-15', 'Received'),
-    ('PO-000002', 'SUP-000004', 'WH-000001', '2026-09-18', '2026-09-24', 'Received'),
+    ('PO-000001', 'SUP-000001', 'WH-000001', '2026-09-10', '2026-09-15', 'Ordered'),
+    ('PO-000002', 'SUP-000004', 'WH-000001', '2026-09-18', '2026-09-24', 'Ordered'),
     ('PO-000003', 'SUP-000002', 'WH-000005', '2026-10-05', '2026-10-12', 'Ordered'),
     ('PO-000004', 'SUP-000003', 'WH-000002', '2026-10-12', '2026-10-17', 'Approved'),
     ('PO-000005', 'SUP-000005', 'WH-000003', '2026-10-20', '2026-10-28', 'Pending'),
@@ -158,16 +160,22 @@ INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost) VALUES
     ('PO-000005', 'PRD-000003',  40, 275.00),
     ('PO-000006', 'PRD-000007', 200,  19.50);
 
+-- Transition completed POs to 'Received' (fires Trigger 7c to credit WH-000001!)
+UPDATE purchase_order SET status = 'Received' WHERE po_id IN ('PO-000001', 'PO-000002');
+
 -- -----------------------------------------------------------------------------
 -- 10. SHIPMENT, 11. WAREHOUSE_TRANSFER, 12. CUSTOMER_DELIVERY, 13. SHIPMENT_LINE
+-- Note: SHP-000001, SHP-000004, SHP-000005 are inserted as 'In Transit' first so
+--       shipment_line triggers validate & deduct origin stock cleanly, then
+--       transitioned to 'Delivered' so Trigger 6b credits WH-000003 accurately!
 -- -----------------------------------------------------------------------------
 INSERT INTO shipment (shipment_id, origin_warehouse_id, carrier_name, ship_date, delivery_date, status, shipment_type) VALUES
-    ('SHP-000001', 'WH-000001', 'DataForge Internal Fleet', '2026-10-01 08:00:00', '2026-10-03 14:30:00', 'Delivered',  'WAREHOUSE_TRANSFER'),
-    ('SHP-000002', 'WH-000004', 'Mekong Freight Co.',       '2026-10-15 09:15:00', NULL,                  'In Transit', 'WAREHOUSE_TRANSFER'),
-    ('SHP-000003', 'WH-000001', 'VietCargo Air',            '2026-11-01 10:00:00', NULL,                  'Pending',    'WAREHOUSE_TRANSFER'),
-    ('SHP-000004', 'WH-000001', 'GHN Heavy Express',        '2026-10-08 07:30:00', '2026-10-09 16:00:00', 'Delivered',  'CUSTOMER_DELIVERY'),
-    ('SHP-000005', 'WH-000002', 'Viettel Post Cargo',       '2026-10-22 11:00:00', '2026-10-24 10:20:00', 'Delivered',  'CUSTOMER_DELIVERY'),
-    ('SHP-000006', 'WH-000003', 'Central Express Logistics','2026-11-05 13:45:00', NULL,                  'In Transit', 'CUSTOMER_DELIVERY');
+    ('SHP-000001', 'WH-000001', 'DataForge Internal Fleet', '2026-10-01 08:00:00', NULL, 'In Transit', 'WAREHOUSE_TRANSFER'),
+    ('SHP-000002', 'WH-000004', 'Mekong Freight Co.',       '2026-10-15 09:15:00', NULL, 'In Transit', 'WAREHOUSE_TRANSFER'),
+    ('SHP-000003', 'WH-000001', 'VietCargo Air',            '2026-11-01 10:00:00', NULL, 'Pending',    'WAREHOUSE_TRANSFER'),
+    ('SHP-000004', 'WH-000001', 'GHN Heavy Express',        '2026-10-08 07:30:00', NULL, 'In Transit', 'CUSTOMER_DELIVERY'),
+    ('SHP-000005', 'WH-000002', 'Viettel Post Cargo',       '2026-10-22 11:00:00', NULL, 'In Transit', 'CUSTOMER_DELIVERY'),
+    ('SHP-000006', 'WH-000003', 'Central Express Logistics','2026-11-05 13:45:00', NULL, 'In Transit', 'CUSTOMER_DELIVERY');
 
 INSERT INTO warehouse_transfer (shipment_id, dest_warehouse_id) VALUES
     ('SHP-000001', 'WH-000003'),
@@ -179,7 +187,7 @@ INSERT INTO customer_delivery (shipment_id, customer_id) VALUES
     ('SHP-000005', 'CUS-000002'),
     ('SHP-000006', 'CUS-000004');
 
--- Note: Inserting shipment_line validates stock & deducts inventory via Trigger 4!
+-- Note: Inserting shipment_line validates stock & deducts inventory via Trigger 4a!
 INSERT INTO shipment_line (shipment_id, product_id, quantity_shipped) VALUES
     ('SHP-000001', 'PRD-000001',  5),
     ('SHP-000001', 'PRD-000005', 10),
@@ -190,6 +198,11 @@ INSERT INTO shipment_line (shipment_id, product_id, quantity_shipped) VALUES
     ('SHP-000004', 'PRD-000002',  4),
     ('SHP-000005', 'PRD-000002',  5),
     ('SHP-000006', 'PRD-000001',  4);
+
+-- Transition completed shipments to 'Delivered' (fires Trigger 6b for SHP-000001 -> WH-000003!)
+UPDATE shipment SET status = 'Delivered', delivery_date = '2026-10-03 14:30:00' WHERE shipment_id = 'SHP-000001';
+UPDATE shipment SET status = 'Delivered', delivery_date = '2026-10-09 16:00:00' WHERE shipment_id = 'SHP-000004';
+UPDATE shipment SET status = 'Delivered', delivery_date = '2026-10-24 10:20:00' WHERE shipment_id = 'SHP-000005';
 
 -- -----------------------------------------------------------------------------
 -- 14. GOODS_RECEIPT (6 Receipts linked to valid supplier_product pairs)

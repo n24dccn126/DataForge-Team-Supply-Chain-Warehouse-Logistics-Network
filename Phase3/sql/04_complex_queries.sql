@@ -284,7 +284,8 @@ ORDER BY order_date ASC, po_id ASC;
 WITH RECURSIVE bom_leaf AS (
     SELECT
         pc.component_product_id,
-        pc.quantity_required AS qty_needed
+        pc.quantity_required AS qty_needed,
+        1 AS depth
     FROM product_component AS pc
     WHERE pc.parent_product_id = 'PRD-000001'
 
@@ -292,10 +293,12 @@ WITH RECURSIVE bom_leaf AS (
 
     SELECT
         pc.component_product_id,
-        bl.qty_needed * pc.quantity_required AS qty_needed
+        bl.qty_needed * pc.quantity_required AS qty_needed,
+        bl.depth + 1 AS depth
     FROM product_component AS pc
     INNER JOIN bom_leaf AS bl
         ON pc.parent_product_id = bl.component_product_id
+    WHERE bl.depth < 10
 ),
 leaf_requirements AS (
     SELECT

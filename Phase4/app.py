@@ -1,4 +1,6 @@
 import os
+from datetime import date, datetime
+from decimal import Decimal
 from flask import Flask, jsonify, render_template, request
 import pymysql
 from pymysql.cursors import DictCursor
@@ -23,19 +25,28 @@ def get_db_connection():
 
 
 def serialize_rows(rows):
-    """Convert Decimal / datetime / date objects cleanly to JSON-friendly types."""
+    """Safely convert datetime, date, and Decimal values to JSON-friendly types."""
     out = []
     for row in rows:
         item = {}
         for k, v in row.items():
-            if hasattr(v, "isoformat"):
-                item[k] = v.isoformat(sep=" ") if "T" not in v.isoformat() else v.isoformat().replace("T", " ")
-            elif hasattr(v, "is_finite"):  # Decimal
+            if isinstance(v, datetime):
+                item[k] = v.strftime("%Y-%m-%d %H:%M:%S")
+            elif isinstance(v, date):
+                item[k] = v.isoformat()
+            elif isinstance(v, Decimal):
                 item[k] = float(v)
             else:
                 item[k] = v
         out.append(item)
     return out
+
+
+def format_db_error(exc):
+    """Return clean MySQL error message without leaking internal Python tracebacks."""
+    if isinstance(exc, pymysql.MySQLError) and len(exc.args) >= 2:
+        return f"MySQL Error {exc.args[0]}: {exc.args[1]}"
+    return str(exc)
 
 
 @app.route("/")
@@ -45,15 +56,18 @@ def index():
 
 @app.route("/api/health")
 def api_health():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT DATABASE() AS db, VERSION() AS version")
             info = cur.fetchone()
-        conn.close()
         return jsonify({"ok": True, "database": info["db"], "version": info["version"]})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -61,6 +75,7 @@ def api_health():
 # =============================================================================
 @app.route("/api/dashboard")
 def api_dashboard():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -92,7 +107,6 @@ def api_dashboard():
             cur.execute("SELECT COUNT(*) AS cnt FROM shipment WHERE status = 'In Transit'")
             in_transit_shipments = cur.fetchone()["cnt"]
 
-        conn.close()
         total_value = sum(w["total_stock_value"] for w in warehouses)
         return jsonify({
             "ok": True,
@@ -107,7 +121,10 @@ def api_dashboard():
             "alerts": alerts,
         })
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -116,6 +133,7 @@ def api_dashboard():
 @app.route("/api/inventory")
 def api_inventory():
     warehouse_id = request.args.get("warehouse_id", "").strip()
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -141,23 +159,28 @@ def api_inventory():
             sql += " ORDER BY i.warehouse_id ASC, i.product_id ASC"
             cur.execute(sql, params)
             rows = serialize_rows(cur.fetchall())
-        conn.close()
         return jsonify({"ok": True, "items": rows})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/inventory/update", methods=["POST"])
 def api_inventory_update():
-    data = request.get_json(force=True)
-    warehouse_id = data.get("warehouse_id")
-    product_id = data.get("product_id")
-    new_qty = data.get("quantity_on_hand")
-
+    conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        warehouse_id = data.get("warehouse_id")
+        product_id = data.get("product_id")
+        new_qty = data.get("quantity_on_hand")
+
+        if not warehouse_id or not product_id or new_qty is None or new_qty == "":
+            return jsonify({"ok": False, "error": "warehouse_id, product_id, and quantity_on_hand are required."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
-            # Count open POs before update so we can tell UI if Trigger 5 auto-created a Restock PO!
             cur.execute("SELECT COUNT(*) AS cnt FROM purchase_order")
             po_before = cur.fetchone()["cnt"]
 
@@ -169,17 +192,25 @@ def api_inventory_update():
                 """,
                 (new_qty, warehouse_id, product_id),
             )
+            if cur.rowcount == 0:
+                conn.rollback()
+                return jsonify({"ok": False, "error": f"Inventory record ({warehouse_id}, {product_id}) not found."}), 404
+
             cur.execute("SELECT COUNT(*) AS cnt FROM purchase_order")
             po_after = cur.fetchone()["cnt"]
             conn.commit()
-        conn.close()
 
         msg = f"Updated {product_id} at {warehouse_id} to {new_qty}."
         if po_after > po_before:
             msg += " [TRIGGER FR5 FIRED] Auto-generated a new Pending Restock Purchase Order!"
         return jsonify({"ok": True, "message": msg, "auto_po_created": po_after > po_before})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        if conn:
+            conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -187,6 +218,7 @@ def api_inventory_update():
 # =============================================================================
 @app.route("/api/products")
 def api_products():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -198,7 +230,6 @@ def api_products():
             suppliers = serialize_rows(cur.fetchall())
             cur.execute("SELECT customer_id, name FROM customer ORDER BY customer_id")
             customers = serialize_rows(cur.fetchall())
-        conn.close()
         return jsonify({
             "ok": True,
             "products": products,
@@ -207,16 +238,19 @@ def api_products():
             "customers": customers,
         })
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/bom/<product_id>")
 def api_bom(product_id):
     warehouse_id = request.args.get("warehouse_id", "WH-000001")
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
-            # Q1: Multi-level BOM Explosion
             cur.execute("""
                 WITH RECURSIVE bom_tree AS (
                     SELECT
@@ -258,16 +292,16 @@ def api_bom(product_id):
             """, (product_id,))
             bom_rows = serialize_rows(cur.fetchall())
 
-            # Q10: Assembly Feasibility at selected warehouse
             cur.execute("""
                 WITH RECURSIVE bom_leaf AS (
-                    SELECT component_product_id, quantity_required AS qty_needed
+                    SELECT component_product_id, quantity_required AS qty_needed, 1 AS depth
                     FROM product_component
                     WHERE parent_product_id = %s
                     UNION ALL
-                    SELECT pc.component_product_id, bl.qty_needed * pc.quantity_required
+                    SELECT pc.component_product_id, bl.qty_needed * pc.quantity_required, bl.depth + 1
                     FROM product_component AS pc
                     INNER JOIN bom_leaf AS bl ON pc.parent_product_id = bl.component_product_id
+                    WHERE bl.depth < 10
                 ),
                 leaf_req AS (
                     SELECT bl.component_product_id, SUM(bl.qty_needed) AS required_per_unit
@@ -290,7 +324,6 @@ def api_bom(product_id):
                 ORDER BY max_units_supported ASC
             """, (product_id, warehouse_id))
             feasibility = serialize_rows(cur.fetchall())
-        conn.close()
         max_buildable = min((r["max_units_supported"] for r in feasibility), default=0)
         return jsonify({
             "ok": True,
@@ -299,16 +332,23 @@ def api_bom(product_id):
             "max_buildable": max_buildable,
         })
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/bom/add", methods=["POST"])
 def api_bom_add():
-    data = request.get_json(force=True)
-    parent_id = data.get("parent_product_id")
-    comp_id = data.get("component_product_id")
-    qty = data.get("quantity_required", 1)
+    conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        parent_id = data.get("parent_product_id")
+        comp_id = data.get("component_product_id")
+        qty = data.get("quantity_required")
+        if not parent_id or not comp_id or qty is None or qty == "":
+            return jsonify({"ok": False, "error": "parent_product_id, component_product_id, and quantity_required are required."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(
@@ -319,10 +359,14 @@ def api_bom_add():
                 (parent_id, comp_id, qty),
             )
             conn.commit()
-        conn.close()
         return jsonify({"ok": True, "message": f"Added BOM link {parent_id} -> {comp_id} (qty={qty})."})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        if conn:
+            conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -330,6 +374,7 @@ def api_bom_add():
 # =============================================================================
 @app.route("/api/procurement")
 def api_procurement():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
@@ -366,27 +411,38 @@ def api_procurement():
                 ORDER BY p.product_id ASC, sp.supply_cost ASC
             """)
             catalog = serialize_rows(cur.fetchall())
-        conn.close()
         return jsonify({"ok": True, "purchase_orders": pos, "supplier_catalog": catalog})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/procurement/create-po", methods=["POST"])
 def api_create_po():
-    data = request.get_json(force=True)
-    supplier_id = data.get("supplier_id")
-    warehouse_id = data.get("warehouse_id")
-    product_id = data.get("product_id")
-    quantity_ordered = data.get("quantity_ordered")
-    unit_cost = data.get("unit_cost")
-    expected_date = data.get("expected_delivery_date") or None
-
     conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        supplier_id = data.get("supplier_id")
+        warehouse_id = data.get("warehouse_id")
+        expected_date = data.get("expected_delivery_date") or None
+        lines = data.get("lines")
+
+        if not lines:
+            # Backward-compatible single-line payload
+            lines = [{
+                "product_id": data.get("product_id"),
+                "quantity_ordered": data.get("quantity_ordered"),
+                "unit_cost": data.get("unit_cost"),
+            }]
+
+        if not supplier_id or not warehouse_id or not lines:
+            return jsonify({"ok": False, "error": "supplier_id, warehouse_id, and at least one PO line are required."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(po_id, 4) AS UNSIGNED)), 0) + 1 AS nxt FROM purchase_order")
+            cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(po_id, 4) AS UNSIGNED)), 0) + 1 AS nxt FROM purchase_order FOR UPDATE")
             next_num = cur.fetchone()["nxt"]
             po_id = f"PO-{next_num:06d}"
 
@@ -397,21 +453,55 @@ def api_create_po():
                 """,
                 (po_id, supplier_id, warehouse_id, expected_date),
             )
-            cur.execute(
-                """
-                INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost)
-                VALUES (%s, %s, %s, %s)
-                """,
-                (po_id, product_id, quantity_ordered, unit_cost),
-            )
+            for line in lines:
+                cur.execute(
+                    """
+                    INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (po_id, line.get("product_id"), line.get("quantity_ordered"), line.get("unit_cost")),
+                )
             conn.commit()
-        conn.close()
-        return jsonify({"ok": True, "message": f"Created Purchase Order {po_id} ({quantity_ordered}x {product_id} @ ${unit_cost})."})
+        return jsonify({"ok": True, "message": f"Created Purchase Order {po_id} with {len(lines)} line(s)."})
     except Exception as exc:
         if conn:
             conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
             conn.close()
-        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/procurement/status", methods=["POST"])
+def api_po_status():
+    conn = None
+    try:
+        data = request.get_json(silent=True) or {}
+        po_id = data.get("po_id")
+        new_status = data.get("status")
+        if not po_id or not new_status:
+            return jsonify({"ok": False, "error": "po_id and status are required."}), 400
+
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE purchase_order SET status = %s WHERE po_id = %s",
+                (new_status, po_id),
+            )
+            if cur.rowcount == 0:
+                conn.rollback()
+                return jsonify({"ok": False, "error": f"Purchase Order {po_id} not found."}), 404
+            conn.commit()
+
+        extra = " (Trigger 7b credited receiving warehouse inventory!)" if new_status == "Received" else ""
+        return jsonify({"ok": True, "message": f"Updated {po_id} status to '{new_status}'.{extra}"})
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
+            conn.close()
 
 
 # =============================================================================
@@ -419,36 +509,42 @@ def api_create_po():
 # =============================================================================
 @app.route("/api/shipments")
 def api_shipments():
+    conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM v_shipment_tracking_overview ORDER BY ship_date DESC")
             rows = serialize_rows(cur.fetchall())
-        conn.close()
         return jsonify({"ok": True, "shipments": rows})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/shipments/create", methods=["POST"])
 def api_create_shipment():
-    data = request.get_json(force=True)
-    shipment_type = data.get("shipment_type")  # WAREHOUSE_TRANSFER or CUSTOMER_DELIVERY
-    origin_warehouse_id = data.get("origin_warehouse_id")
-    dest_warehouse_id = data.get("dest_warehouse_id")
-    customer_id = data.get("customer_id")
-    carrier_name = (data.get("carrier_name") or "DataForge Express").strip()
-    product_id = data.get("product_id")
-    quantity_shipped = data.get("quantity_shipped")
-
     conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        shipment_type = data.get("shipment_type")
+        origin_warehouse_id = data.get("origin_warehouse_id")
+        dest_warehouse_id = data.get("dest_warehouse_id")
+        customer_id = data.get("customer_id")
+        carrier_name = (data.get("carrier_name") or "DataForge Express").strip()
+        product_id = data.get("product_id")
+        quantity_shipped = data.get("quantity_shipped")
+
+        if not shipment_type or not origin_warehouse_id or not product_id or quantity_shipped is None or quantity_shipped == "":
+            return jsonify({"ok": False, "error": "Missing required shipment fields."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS cnt FROM purchase_order")
             po_before = cur.fetchone()["cnt"]
 
-            cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(shipment_id, 5) AS UNSIGNED)), 0) + 1 AS nxt FROM shipment")
+            cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(shipment_id, 5) AS UNSIGNED)), 0) + 1 AS nxt FROM shipment FOR UPDATE")
             next_num = cur.fetchone()["nxt"]
             shipment_id = f"SHP-{next_num:06d}"
 
@@ -482,7 +578,6 @@ def api_create_shipment():
             cur.execute("SELECT COUNT(*) AS cnt FROM purchase_order")
             po_after = cur.fetchone()["cnt"]
             conn.commit()
-        conn.close()
 
         msg = f"Created {shipment_type} {shipment_id} ({quantity_shipped}x {product_id}). Inventory deducted at {origin_warehouse_id}."
         if po_after > po_before:
@@ -491,16 +586,22 @@ def api_create_shipment():
     except Exception as exc:
         if conn:
             conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
             conn.close()
-        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 @app.route("/api/shipments/status", methods=["POST"])
 def api_shipment_status():
-    data = request.get_json(force=True)
-    shipment_id = data.get("shipment_id")
-    new_status = data.get("status")
+    conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        shipment_id = data.get("shipment_id")
+        new_status = data.get("status")
+        if not shipment_id or not new_status:
+            return jsonify({"ok": False, "error": "shipment_id and status are required."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
             if new_status == "Delivered":
@@ -513,20 +614,31 @@ def api_shipment_status():
                     "UPDATE shipment SET status = %s WHERE shipment_id = %s",
                     (new_status, shipment_id),
                 )
+            if cur.rowcount == 0:
+                conn.rollback()
+                return jsonify({"ok": False, "error": f"Shipment {shipment_id} not found."}), 404
             conn.commit()
-        conn.close()
         return jsonify({"ok": True, "message": f"Updated {shipment_id} status to '{new_status}'."})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        if conn:
+            conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/api/shipments/add-line", methods=["POST"])
 def api_shipment_add_line():
-    data = request.get_json(force=True)
-    shipment_id = data.get("shipment_id")
-    product_id = data.get("product_id")
-    qty = data.get("quantity_shipped")
+    conn = None
     try:
+        data = request.get_json(silent=True) or {}
+        shipment_id = data.get("shipment_id")
+        product_id = data.get("product_id")
+        qty = data.get("quantity_shipped")
+        if not shipment_id or not product_id or qty is None or qty == "":
+            return jsonify({"ok": False, "error": "shipment_id, product_id, and quantity_shipped are required."}), 400
+
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(
@@ -537,12 +649,17 @@ def api_shipment_add_line():
                 (shipment_id, product_id, qty),
             )
             conn.commit()
-        conn.close()
         return jsonify({"ok": True, "message": f"Added {qty}x {product_id} to {shipment_id} (inventory deducted via BR7 trigger)."})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        if conn:
+            conn.rollback()
+        return jsonify({"ok": False, "error": format_db_error(exc)}), 400
+    finally:
+        if conn:
+            conn.close()
 
 
 if __name__ == "__main__":
     port = int(os.getenv("FLASK_PORT", "5000"))
-    app.run(host="127.0.0.1", port=port, debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(host="127.0.0.1", port=port, debug=debug_mode)
