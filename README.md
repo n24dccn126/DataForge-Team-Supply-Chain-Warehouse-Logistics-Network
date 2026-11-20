@@ -34,7 +34,7 @@
 ├── Phase3/
 │   └── sql/
 │       ├── 01_ddl_schema.sql                               # 14 bảng chuẩn BCNF, 19 FKs, CHECK/REGEXP, 7 Secondary Indexes
-│       ├── 02_views_and_triggers.sql                       # 3 Views & 16 Triggers (BR1, BR2, BR4 đệ quy, BR7, FR5)
+│       ├── 02_views_and_triggers.sql                       # 3 Views & 116 Triggers (BR1, BR2, BR4 đệ quy, BR7, FR5)
 │       ├── 03_dml_mock_data.sql                            # Dữ liệu mẫu 5 kho, 5 NCC, 12 SP (BOM 3 cấp), 6 PO, 6 Shipment
 │       ├── 04_complex_queries.sql                          # 12 truy vấn phức tạp (WITH RECURSIVE, Window Functions, EXPLAIN)
 │       └── 05_verification_and_rbac.sql                    # 16 Test Cases kiểm chứng ràng buộc & RBAC 6 Roles (GRANT/REVOKE)
@@ -53,7 +53,7 @@
 ### 1. Khởi tạo Cơ sở dữ liệu (MySQL 8.0 / MySQL Workbench)
 Chạy tuần tự 5 script trong thư mục `Phase3/sql/`:
 1. `01_ddl_schema.sql` — Tạo database `supply_chain_logistics_db`, 14 bảng và 7 secondary indexes.
-2. `02_views_and_triggers.sql` — Khởi tạo 3 views nghiệp vụ và 16 triggers bảo vệ toàn vẹn dữ liệu.
+2. `02_views_and_triggers.sql` — Khởi tạo 3 views nghiệp vụ và 116 triggers bảo vệ toàn vẹn dữ liệu.
 3. `03_dml_mock_data.sql` — Nạp dữ liệu mẫu.
 4. `04_complex_queries.sql` — Chạy 12 câu truy vấn phân tích & kiểm thử hiệu năng `EXPLAIN`.
 5. `05_verification_and_rbac.sql` — Kiểm thử các test case chặn dữ liệu lỗi (`TC1–TC16`) và thiết lập phân quyền RBAC.
