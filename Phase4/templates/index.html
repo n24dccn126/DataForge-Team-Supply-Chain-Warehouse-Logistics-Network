@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DATAFORGE — Supply Chain &amp; Warehouse Logistics Network</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --panel-2: #263348;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --primary: #38bdf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: #0b1220;
+      border-bottom: 1px solid var(--border);
+      padding: 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .brand h1 { font-size: 1.25rem; color: var(--primary); letter-spacing: 0.3px; }
+    .brand p { font-size: 0.85rem; color: var(--muted); }
+    .db-pill {
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: rgba(34,197,94,0.15);
+      color: #4ade80;
+      border: 1px solid rgba(34,197,94,0.35);
+    }
+    .db-pill.err {
+      background: rgba(239,68,68,0.15);
+      color: #f87171;
+      border-color: rgba(239,68,68,0.4);
+    }
+    nav {
+      display: flex;
+      gap: 8px;
+      padding: 12px 28px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    nav button {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid transparent;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+      transition: all 0.15s;
+    }
+    nav button:hover { color: var(--text); background: var(--panel-2); }
+    nav button.active {
+      background: rgba(56,189,248,0.15);
+      color: var(--primary);
+      border-color: rgba(56,189,248,0.4);
+    }
+    main { max-width: 1380px; margin: 22px auto; padding: 0 24px 48px; }
+    .tab { display: none; }
+    .tab.active { display: block; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+    .kpi {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .kpi .label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .kpi .val { font-size: 1.6rem; font-weight: 700; margin-top: 4px; color: var(--text); }
+    .kpi.alert .val { color: var(--warning); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 20px;
+      overflow-x: auto;
+    }
+    .card h2 { font-size: 1.05rem; margin-bottom: 12px; color: var(--primary); display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; background: rgba(15,23,42,0.45); }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+    .b-ok { background: rgba(34,197,94,0.18); color: #4ade80; }
+    .b-warn { background: rgba(245,158,11,0.2); color: #fbbf24; }
+    .b-err { background: rgba(239,68,68,0.2); color: #f87171; }
+    .b-info { background: rgba(56,189,248,0.18); color: #38bdf8; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 14px; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 0.78rem; color: var(--muted); }
+    input, select {
+      background: #0f172a;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 0.88rem;
+    }
+    .btn {
+      background: var(--primary);
+      color: #0b1220;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-sm { padding: 5px 10px; font-size: 0.78rem; }
+    .btn-warn { background: var(--warning); color: #0b1220; }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 24px;
+      max-width: 480px;
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      display: none;
+      z-index: 999;
+    }
+    .toast.ok { background: #14532d; border: 1px solid #22c55e; color: #dcfce7; }
+    .toast.err { background: #7f1d1d; border: 1px solid #ef4444; color: #fee2e2; }
+    .mono { font-family: Consolas, monospace; font-size: 0.84rem; }
+    .hint { font-size: 0.82rem; color: var(--muted); margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>DATAFORGE — Supply Chain &amp; Warehouse Logistics Network</h1>
+      <p>INT1313 Databases — Phase 4 Live Integration Demo (Flask + MySQL 8.0)</p>
+    </div>
+    <div id="dbStatus" class="db-pill">Connecting to MySQL...</div>
+  </header>
+
+  <nav>
+    <button class="active" onclick="switchTab('dashboard', this)">1. Dashboard &amp; Restock Alerts (FR5)</button>
+    <button onclick="switchTab('inventory', this)">2. Real-Time Inventory (FR1 / BR3)</button>
+    <button onclick="switchTab('bom', this)">3. Recursive BOM &amp; Cycle Guard (FR4 / BR4)</button>
+    <button onclick="switchTab('procurement', this)">4. Purchase Orders &amp; Suppliers (FR2 / FR6)</button>
+    <button onclick="switchTab('shipments', this)">5. Shipments &amp; Transfers (FR3 / FR7 / BR7)</button>
+  </nav>
+
+  <main>
+    <!-- TAB 1: DASHBOARD -->
+    <section id="tab-dashboard" class="tab active">
+      <div class="kpis" id="kpiGrid"></div>
+
+      <div class="card">
+        <h2>
+          <span>Active Restock Alerts (View: <code>v_restock_alerts</code> — FR5)</span>
+          <button class="btn btn-sm" onclick="loadDashboard()">Refresh</button>
+        </h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Warehouse</th><th>Product</th><th>On Hand</th><th>Reorder Level</th>
+              <th>Shortage</th><th>Rec. Qty</th><th>Best Supplier</th><th>Best Cost</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="alertsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Warehouse Capacity &amp; Valuation Summary (View: <code>v_warehouse_inventory_summary</code>)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>Warehouse</th><th>Manager</th><th>SKUs</th>
+              <th>Units</th><th>Capacity</th><th>Utilization</th><th>Total Value ($)</th><th>Low Stock SKUs</th>
+            </tr>
+          </thead>
+          <tbody id="whSummaryBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 2: INVENTORY -->
+    <section id="tab-inventory" class="tab">
+      <div class="card">
+        <h2>Real-Time Inventory Control (FR1) — Live Trigger FR5 &amp; BR3 Demo</h2>
+        <p class="hint">
+          Demo Tip: Thu giam ton kho <code>PRD-000005</code> tai <code>WH-000001</code> tu <code>40</code> xuong <code>20</code> (&lt; ngưỡng 35)
+          de kich hoat <b>Trigger 5</b> tu dong tao PO <code>Pending</code>, hoac nhap so am <code>-5</code> de thay MySQL chan theo <b>BR3</b>.
+        </p>
+        <div class="controls">
+          <div class="field">
+            <label>Filter by Warehouse</label>
+            <select id="invWhFilter" onchange="loadInventory()">
+              <option value="">All Warehouses</option>
+            </select>
+          </div>
+          <button class="btn btn-sm" onclick="loadInventory()">Reload</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Warehouse</th><th>Product</th><th>Category</th><th>On Hand</th>
+              <th>Reorder Level</th><th>Last Updated (NFR7)</th><th>Quick Update</th>
+            </tr>
+          </thead>
+          <tbody id="invBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: BOM -->
+    <section id="tab-bom" class="tab">
+      <div class="card">
+        <h2>Recursive Bill of Materials Explorer (Q1 &amp; Q10 — FR4)</h2>
+        <div class="controls">
+          <div class="field">
+            <label>Parent Product</label>
+            <select id="bomProductSelect" onchange="loadBom()"></select>
+          </div>
+          <div class="field">
+            <label>Assembly Warehouse (for Q10 Feasibility)</label>
+            <select id="bomWhSelect" onchange="loadBom()"></select>
+          </div>
+          <button class="btn btn-sm" onclick="loadBom()">Explode BOM</button>
+        </div>
+        <div id="bomFeasibilityBanner" style="margin-bottom:14px;"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Level</th><th>BOM Path</th><th>Component</th><th>Category</th>
+              <th>Qty / Parent</th><th>Cumulative Qty</th><th>Unit Price ($)</th><th>Extended Value ($)</th>
+            </tr>
+          </thead>
+          <tbody id="bomBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Add BOM Relationship — Live BR4 Recursive Cycle Guard Test</h2>
+        <p class="hint">
+          Demo Tip: Thu them <code>PRD-000007 (STM32H7)</code> → <code>PRD-000001 (Drone X1)</code> de thay
+          <b>Trigger 1 (<code>WITH RECURSIVE</code>)</b> chan vong lap 3 cap!
+        </p>
+        <div class="controls">
+          <div class="field"><label>Parent Product</label><select id="addBomParent"></select></div>
+          <div class="field"><label>Component Product</label><select id="addBomChild"></select></div>
+          <div class="field"><label>Quantity Required</label><input id="addBomQty" type="number" value="1" min="1" style="width:90px" /></div>
+          <button class="btn btn-warn" onclick="addBomLink()">Insert BOM Link</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: PROCUREMENT -->
+    <section id="tab-procurement" class="tab">
+      <div class="card">
+        <h2>Create Purchase Order — Dat hang Nha cung cap (FR2 &amp; BR5)</h2>
+        <div class="controls">
+          <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect"></select></div>
+          <div class="field"><label>Receiving Warehouse</label><select id="poWhSelect"></select></div>
+          <div class="field"><label>Product</label><select id="poProdSelect"></select></div>
+          <div class="field"><label>Quantity</label><input id="poQty" type="number" value="50" min="1" style="width:90px" /></div>
+          <div class="field"><label>Unit Cost ($)</label><input id="poCost" type="number" value="25.00" step="0.5" min="0.01" style="width:105px" /></div>
+          <div class="field"><label>Expected Date</label><input id="poDate" type="date" value="2026-12-01" /></div>
+          <button class="btn" onclick="createPO()">Create PO</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>
+          <span>Purchase Orders (Includes Auto-Generated Restock POs from Trigger FR5)</span>
+          <button class="btn btn-sm" onclick="loadProcurement()">Refresh</button>
+        </h2>
+        <table>
+          <thead>
+            <tr>
+              <th>PO ID</th><th>Supplier</th><th>Warehouse</th><th>Order Date</th>
+              <th>Expected Delivery</th><th>Lines</th><th>Total ($)</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="poBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Supplier Price &amp; Lead-Time Comparison (FR6)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Product ID</th><th>Product Name</th><th>Supplier</th><th>Supply Cost ($)</th><th>Lead Time (Days)</th>
+            </tr>
+          </thead>
+          <tbody id="supCatBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: SHIPMENTS -->
+    <section id="tab-shipments" class="tab">
+      <div class="card">
+        <h2>Create New Shipment — Giao hang / Chuyen kho (FR3, BR1, BR2, BR7)</h2>
+        <p class="hint">
+          Demo Tip: Chon <code>WAREHOUSE_TRANSFER</code> voi Kho xuat = Kho dich de test <b>Trigger BR2</b>;
+          hoac nhap so luong vuot ton kho de test <b>Trigger BR7</b>; hoac xuat hang hop le de tru kho &amp; kich hoat <b>Trigger FR5</b>!
+        </p>
+        <div class="controls">
+          <div class="field">
+            <label>Shipment Type (BR1)</label>
+            <select id="shType" onchange="toggleShipDest()">
+              <option value="CUSTOMER_DELIVERY">CUSTOMER_DELIVERY (Giao khach)</option>
+              <option value="WAREHOUSE_TRANSFER">WAREHOUSE_TRANSFER (Chuyen kho)</option>
+            </select>
+          </div>
+          <div class="field"><label>Origin Warehouse</label><select id="shOrigWh"></select></div>
+          <div class="field" id="shCustWrap"><label>Customer</label><select id="shCust"></select></div>
+          <div class="field" id="shDestWhWrap" style="display:none;"><label>Destination Warehouse</label><select id="shDestWh"></select></div>
+          <div class="field"><label>Carrier</label><input id="shCarrier" value="DataForge Express" style="width:150px" /></div>
+          <div class="field"><label>Product</label><select id="shProd"></select></div>
+          <div class="field"><label>Quantity</label><input id="shQty" type="number" value="2" min="1" style="width:85px" /></div>
+          <button class="btn" onclick="createShipment()">Create Shipment</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>
+          <span>Unified Shipment Tracking (View: <code>v_shipment_tracking_overview</code> — FR3 &amp; FR7)</span>
+          <button class="btn btn-sm" onclick="loadShipments()">Refresh</button>
+        </h2>
+        <p class="hint">
+          Demo Tip: Doi trang thai mot don <code>WAREHOUSE_TRANSFER</code> (vd <code>SHP-000002</code>) sang <b>Delivered</b> de kich hoat
+          <b>Trigger 6</b> tu dong cong ton kho vao kho dich!
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Shipment ID</th><th>Type</th><th>Origin</th><th>Destination</th>
+              <th>Carrier</th><th>Units</th><th>Ship Date</th><th>Status</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="shipBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Add Shipment Line — Live BR7 Stock Validation Test</h2>
+        <p class="hint">
+          Demo Tip: Nhap so luong lon (vd <code>9999</code>) de thay <b>Trigger 4 (BR7)</b> chan xuat vuot ton kho.
+        </p>
+        <div class="controls">
+          <div class="field"><label>Shipment ID</label><input id="slShipId" value="SHP-000003" style="width:130px" /></div>
+          <div class="field"><label>Product</label><select id="slProdId"></select></div>
+          <div class="field"><label>Quantity Shipped</label><input id="slQty" type="number" value="9999" style="width:110px" /></div>
+          <button class="btn btn-warn" onclick="addShipmentLine()">Ship Item</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const fmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    function showToast(msg, isOk = true) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast ' + (isOk ? 'ok' : 'err');
+      el.style.display = 'block';
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5500);
+    }
+
+    function switchTab(name, btn) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+      btn.classList.add('active');
+      if (name === 'dashboard') loadDashboard();
+      if (name === 'inventory') loadInventory();
+      if (name === 'bom') loadBom();
+      if (name === 'procurement') loadProcurement();
+      if (name === 'shipments') loadShipments();
+    }
+
+    async function checkHealth() {
+      const pill = document.getElementById('dbStatus');
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        if (data.ok) {
+          pill.textContent = `Connected: ${data.database} (MySQL ${data.version})`;
+          pill.className = 'db-pill';
+        } else {
+          pill.textContent = `DB Error: ${data.error}`;
+          pill.className = 'db-pill err';
+        }
+      } catch (e) {
+        pill.textContent = 'Backend unreachable';
+        pill.className = 'db-pill err';
+      }
+    }
+
+    async function loadMeta() {
+      const res = await fetch('/api/products');
+      const data = await res.json();
+      if (!data.ok) return;
+      const whOpts = data.warehouses.map(w => `<option value="${w.warehouse_id}">${w.warehouse_id} — ${w.name}</option>`).join('');
+      document.getElementById('invWhFilter').innerHTML = '<option value="">All Warehouses</option>' + whOpts;
+      document.getElementById('bomWhSelect').innerHTML = whOpts;
+      document.getElementById('poWhSelect').innerHTML = whOpts;
+      document.getElementById('shOrigWh').innerHTML = whOpts;
+      document.getElementById('shDestWh').innerHTML = whOpts;
+
+      const supOpts = data.suppliers.map(s => `<option value="${s.supplier_id}">${s.supplier_id} — ${s.name}</option>`).join('');
+      document.getElementById('poSupSelect').innerHTML = supOpts;
+
+      const custOpts = (data.customers || []).map(c => `<option value="${c.customer_id}">${c.customer_id} — ${c.name}</option>`).join('');
+      document.getElementById('shCust').innerHTML = custOpts;
+
+      const prodOpts = data.products.map(p => `<option value="${p.product_id}">${p.product_id} — ${p.name}</option>`).join('');
+      document.getElementById('bomProductSelect').innerHTML = prodOpts;
+      document.getElementById('addBomParent').innerHTML = prodOpts;
+      document.getElementById('addBomChild').innerHTML = prodOpts;
+      document.getElementById('slProdId').innerHTML = prodOpts;
+      document.getElementById('poProdSelect').innerHTML = prodOpts;
+      document.getElementById('shProd').innerHTML = prodOpts;
+      // Default cycle test values: PRD-000007 -> PRD-000001
+      document.getElementById('addBomParent').value = 'PRD-000007';
+      document.getElementById('addBomChild').value = 'PRD-000001';
+    }
+
+    async function loadDashboard() {
+      const res = await fetch('/api/dashboard');
+      const data = await res.json();
+      if (!data.ok) return showToast(data.error, false);
+      const k = data.kpis;
+      document.getElementById('kpiGrid').innerHTML = `
+        <div class="kpi"><div class="label">Warehouses</div><div class="val">${k.total_warehouses}</div></div>
+        <div class="kpi"><div class="label">Catalog Products</div><div class="val">${k.total_products}</div></div>
+        <div class="kpi"><div class="label">Total Stock Value</div><div class="val">$${fmt(k.total_stock_value)}</div></div>
+        <div class="kpi alert"><div class="label">Active Restock Alerts</div><div class="val">${k.active_alerts}</div></div>
+        <div class="kpi"><div class="label">Shipments In Transit</div><div class="val">${k.in_transit_shipments}</div></div>
+      `;
+      document.getElementById('alertsBody').innerHTML = data.alerts.map(a => `
+        <tr>
+          <td class="mono">${a.warehouse_id}<br/><small style="color:var(--muted)">${a.warehouse_name}</small></td>
+          <td><b>${a.product_id}</b> — ${a.product_name}</td>
+          <td><span class="badge b-err">${a.quantity_on_hand}</span></td>
+          <td>${a.reorder_level}</td>
+          <td><b>-${a.shortage_qty}</b></td>
+          <td>${a.recommended_order_qty}</td>
+          <td>${a.recommended_supplier_name || '-'}</td>
+          <td>$${fmt(a.best_unit_cost)}</td>
+          <td><span class="badge ${a.procurement_status === 'Open PO Exists' ? 'b-info' : 'b-warn'}">${a.procurement_status}</span></td>
+        </tr>
+      `).join('') || '<tr><td colspan="9">All stock levels are healthy.</td></tr>';
+
+      document.getElementById('whSummaryBody').innerHTML = data.warehouses.map(w => `
+        <tr>
+          <td class="mono">${w.warehouse_id}</td>
+          <td><b>${w.warehouse_name}</b></td>
+          <td>${w.manager}</td>
+          <td>${w.distinct_skus}</td>
+          <td>${Number(w.total_units_in_stock).toLocaleString()}</td>
+          <td>${Number(w.capacity).toLocaleString()}</td>
+          <td>${w.utilization_pct}%</td>
+          <td>$${fmt(w.total_stock_value)}</td>
+          <td><span class="badge ${w.low_stock_sku_count > 0 ? 'b-warn' : 'b-ok'}">${w.low_stock_sku_count}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadInventory() {
+      const wh = document.getElementById('invWhFilter').value;
+      const res = await fetch('/api/inventory' + (wh ? `?warehouse_id=${wh}` : ''));
+      const data = await res.json();
+      if (!data.ok) return showToast(data.error, false);
+      document.getElementById('invBody').innerHTML = data.items.map(r => {
+        const low = r.quantity_on_hand < r.reorder_level;
+        const inputId = `qty_${r.warehouse_id}_${r.product_id}`;
+        return `
+          <tr>
+            <td class="mono">${r.warehouse_id}<br/><small style="color:var(--muted)">${r.warehouse_name}</small></td>
+            <td><b>${r.product_id}</b> — ${r.product_name}</td>
+            <td>${r.category}</td>
+            <td><span class="badge ${low ? 'b-err' : 'b-ok'}">${r.quantity_on_hand}</span></td>
+            <td>${r.reorder_level}</td>
+            <td class="mono">${r.last_updated}</td>
+            <td>
+              <input id="${inputId}" type="number" value="${r.quantity_on_hand}" style="width:85px" />
+              <button class="btn btn-sm" onclick="updateStock('${r.warehouse_id}','${r.product_id}','${inputId}')">Save</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function updateStock(whId, prodId, inputId) {
+      const val = Number(document.getElementById(inputId).value);
+      const res = await fetch('/api/inventory/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ warehouse_id: whId, product_id: prodId, quantity_on_hand: val })
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadInventory();
+    }
+
+    async function loadBom() {
+      const prodId = document.getElementById('bomProductSelect').value || 'PRD-000001';
+      const whId = document.getElementById('bomWhSelect').value || 'WH-000001';
+      const res = await fetch(`/api/bom/${prodId}?warehouse_id=${whId}`);
+      const data = await res.json();
+      if (!data.ok) return showToast(data.error, false);
+
+      const banner = document.getElementById('bomFeasibilityBanner');
+      if (data.feasibility.length > 0) {
+        const bottleneck = data.feasibility[0];
+        banner.innerHTML = `<span class="badge b-info" style="font-size:0.86rem;padding:6px 12px;">
+          Q10 Assembly Feasibility at ${whId}: Max Buildable = <b>${data.max_buildable} units</b>
+          (Bottleneck: ${bottleneck.raw_component_name} — ${bottleneck.stock_available} in stock / ${bottleneck.required_per_unit} needed per unit)
+        </span>`;
+      } else {
+        banner.innerHTML = `<span class="badge b-ok">Raw component (no sub-components in BOM).</span>`;
+      }
+
+      document.getElementById('bomBody').innerHTML = data.bom.map(r => `
+        <tr>
+          <td><span class="badge b-info">Level ${r.bom_level}</span></td>
+          <td class="mono">${r.bom_path}</td>
+          <td><b>${r.product_id}</b> — ${r.component_name}</td>
+          <td>${r.category}</td>
+          <td>${r.qty_per_parent}</td>
+          <td><b>${r.total_qty_needed}</b></td>
+          <td>$${fmt(r.unit_price)}</td>
+          <td>$${fmt(r.extended_value)}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="8">No sub-components found for this product.</td></tr>';
+    }
+
+    async function addBomLink() {
+      const parent_product_id = document.getElementById('addBomParent').value;
+      const component_product_id = document.getElementById('addBomChild').value;
+      const quantity_required = Number(document.getElementById('addBomQty').value);
+      const res = await fetch('/api/bom/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent_product_id, component_product_id, quantity_required })
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadBom();
+    }
+
+    async function loadProcurement() {
+      const res = await fetch('/api/procurement');
+      const data = await res.json();
+      if (!data.ok) return showToast(data.error, false);
+      document.getElementById('poBody').innerHTML = data.purchase_orders.map(p => `
+        <tr>
+          <td class="mono"><b>${p.po_id}</b></td>
+          <td>${p.supplier_name}</td>
+          <td>${p.warehouse_name}</td>
+          <td class="mono">${p.order_date}</td>
+          <td class="mono">${p.expected_delivery_date || '-'}</td>
+          <td>${p.line_count}</td>
+          <td>$${fmt(p.total_amount)}</td>
+          <td><span class="badge ${p.status === 'Received' ? 'b-ok' : (p.status === 'Cancelled' ? 'b-err' : 'b-warn')}">${p.status}</span></td>
+        </tr>
+      `).join('');
+
+      document.getElementById('supCatBody').innerHTML = data.supplier_catalog.map(c => `
+        <tr>
+          <td class="mono">${c.product_id}</td>
+          <td>${c.product_name}</td>
+          <td>${c.supplier_name}</td>
+          <td><b>$${fmt(c.supply_cost)}</b></td>
+          <td>${c.lead_time_days} days</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadShipments() {
+      const res = await fetch('/api/shipments');
+      const data = await res.json();
+      if (!data.ok) return showToast(data.error, false);
+      document.getElementById('shipBody').innerHTML = data.shipments.map(s => `
+        <tr>
+          <td class="mono"><b>${s.shipment_id}</b></td>
+          <td><span class="badge ${s.shipment_type === 'WAREHOUSE_TRANSFER' ? 'b-info' : 'b-ok'}">${s.shipment_type}</span></td>
+          <td>${s.origin_warehouse_name}</td>
+          <td>${s.destination_name || '-'}</td>
+          <td>${s.carrier_name}</td>
+          <td>${s.total_units_shipped}</td>
+          <td class="mono">${s.ship_date}</td>
+          <td><span class="badge ${s.status === 'Delivered' ? 'b-ok' : 'b-warn'}">${s.status}</span></td>
+          <td>
+            ${s.status !== 'Delivered'
+              ? `<button class="btn btn-sm" onclick="markDelivered('${s.shipment_id}')">Mark Delivered</button>`
+              : '<small style="color:var(--muted)">Completed</small>'}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function markDelivered(shipmentId) {
+      const res = await fetch('/api/shipments/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shipment_id: shipmentId, status: 'Delivered' })
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadShipments();
+    }
+
+    async function createPO() {
+      const payload = {
+        supplier_id: document.getElementById('poSupSelect').value,
+        warehouse_id: document.getElementById('poWhSelect').value,
+        product_id: document.getElementById('poProdSelect').value,
+        quantity_ordered: Number(document.getElementById('poQty').value),
+        unit_cost: Number(document.getElementById('poCost').value),
+        expected_delivery_date: document.getElementById('poDate').value || null,
+      };
+      const res = await fetch('/api/procurement/create-po', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadProcurement();
+    }
+
+    function toggleShipDest() {
+      const isTransfer = document.getElementById('shType').value === 'WAREHOUSE_TRANSFER';
+      document.getElementById('shDestWhWrap').style.display = isTransfer ? 'flex' : 'none';
+      document.getElementById('shCustWrap').style.display = isTransfer ? 'none' : 'flex';
+    }
+
+    async function createShipment() {
+      const payload = {
+        shipment_type: document.getElementById('shType').value,
+        origin_warehouse_id: document.getElementById('shOrigWh').value,
+        dest_warehouse_id: document.getElementById('shDestWh').value,
+        customer_id: document.getElementById('shCust').value,
+        carrier_name: document.getElementById('shCarrier').value,
+        product_id: document.getElementById('shProd').value,
+        quantity_shipped: Number(document.getElementById('shQty').value),
+      };
+      const res = await fetch('/api/shipments/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadShipments();
+    }
+
+    async function addShipmentLine() {
+      const shipment_id = document.getElementById('slShipId').value.trim();
+      const product_id = document.getElementById('slProdId').value;
+      const quantity_shipped = Number(document.getElementById('slQty').value);
+      const res = await fetch('/api/shipments/add-line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shipment_id, product_id, quantity_shipped })
+      });
+      const data = await res.json();
+      showToast(data.ok ? data.message : data.error, data.ok);
+      if (data.ok) loadShipments();
+    }
+
+    (async () => {
+      await checkHealth();
+      await loadMeta();
+      await loadDashboard();
+    })();
+  </script>
+</body>
+</html>
