@@ -443,7 +443,7 @@ def api_create_po():
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(po_id, 4) AS UNSIGNED)), 0) + 1 AS nxt FROM purchase_order FOR UPDATE")
-            next_num = cur.fetchone()["nxt"]
+            next_num = int(cur.fetchone()["nxt"])
             po_id = f"PO-{next_num:06d}"
 
             cur.execute(
@@ -493,7 +493,7 @@ def api_po_status():
                 return jsonify({"ok": False, "error": f"Purchase Order {po_id} not found."}), 404
             conn.commit()
 
-        extra = " (Trigger 7b credited receiving warehouse inventory!)" if new_status == "Received" else ""
+        extra = " (Trigger 7c credited receiving warehouse inventory!)" if new_status == "Received" else ""
         return jsonify({"ok": True, "message": f"Updated {po_id} status to '{new_status}'.{extra}"})
     except Exception as exc:
         if conn:
@@ -545,7 +545,7 @@ def api_create_shipment():
             po_before = cur.fetchone()["cnt"]
 
             cur.execute("SELECT COALESCE(MAX(CAST(SUBSTRING(shipment_id, 5) AS UNSIGNED)), 0) + 1 AS nxt FROM shipment FOR UPDATE")
-            next_num = cur.fetchone()["nxt"]
+            next_num = int(cur.fetchone()["nxt"])
             shipment_id = f"SHP-{next_num:06d}"
 
             cur.execute(
