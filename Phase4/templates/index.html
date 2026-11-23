@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DATAFORGE — Supply Chain &amp; Warehouse Logistics Network</title>
+  <link rel="icon" href="data:," />
   <style>
     :root {
       --bg: #0f172a;
@@ -290,7 +291,7 @@
         <div class="controls">
           <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect"></select></div>
           <div class="field"><label>Receiving Warehouse</label><select id="poWhSelect"></select></div>
-          <div class="field"><label>Expected Date</label><input id="poDate" type="date" value="2026-12-01" /></div>
+          <div class="field"><label>Expected Date</label><input id="poDate" type="date" /></div>
           <button class="btn btn-sm" type="button" onclick="addPoDraftRow()">+ Add Product Line</button>
           <button class="btn" type="button" onclick="createPO()">Create PO</button>
         </div>
@@ -404,6 +405,20 @@
       window._toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5500);
     }
 
+    async function apiJson(url, options) {
+      try {
+        const res = await fetch(url, options);
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { ok: false, error: `HTTP ${res.status}: Invalid JSON response` };
+        }
+      } catch (err) {
+        return { ok: false, error: err.message || 'Backend unreachable' };
+      }
+    }
+
     function switchTab(name, btn) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -418,18 +433,12 @@
 
     async function checkHealth() {
       const pill = document.getElementById('dbStatus');
-      try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        if (data.ok) {
-          pill.textContent = `Connected: ${data.database} (MySQL ${data.version})`;
-          pill.className = 'db-pill';
-        } else {
-          pill.textContent = `DB Error: ${data.error}`;
-          pill.className = 'db-pill err';
-        }
-      } catch (e) {
-        pill.textContent = 'Backend unreachable';
+      const data = await apiJson('/api/health');
+      if (data.ok) {
+        pill.textContent = `Connected: ${data.database} (MySQL ${data.version})`;
+        pill.className = 'db-pill';
+      } else {
+        pill.textContent = data.error ? `DB Error: ${data.error}` : 'Backend unreachable';
         pill.className = 'db-pill err';
       }
     }
@@ -455,6 +464,7 @@
 
     function addPoDraftRow() {
       const wrap = document.getElementById('poLinesWrap');
+      const used = new Set(Array.from(wrap.querySelectorAll('.po-line-prod')).map(s => s.value));
       const row = document.createElement('div');
       row.className = 'controls po-draft-row';
       row.style.marginBottom = '8px';
@@ -464,13 +474,15 @@
         <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="25.00" step="0.5" min="0.01" style="width:105px" /></div>
         <button class="btn btn-sm btn-warn" type="button" onclick="this.parentElement.remove()">Remove</button>
       `;
+      const sel = row.querySelector('.po-line-prod');
+      const nextOpt = Array.from(sel.options).find(o => !used.has(o.value));
+      if (nextOpt) sel.value = nextOpt.value;
       wrap.appendChild(row);
     }
 
     async function loadMeta() {
-      const res = await fetch('/api/products');
-      const data = await res.json();
-      if (!data.ok) return;
+      const data = await apiJson('/api/products');
+      if (!data.ok) return showToast(data.error || 'Failed to load metadata', false);
       const whOpts = data.warehouses.map(w => `<option value="${esc(w.warehouse_id)}">${esc(w.warehouse_id)} — ${esc(w.name)}</option>`).join('');
       document.getElementById('invWhFilter').innerHTML = '<option value="">All Warehouses</option>' + whOpts;
       document.getElementById('bomWhSelect').innerHTML = whOpts;
@@ -492,14 +504,17 @@
       document.getElementById('shProd').innerHTML = cachedProdOpts;
       document.getElementById('addBomParent').value = 'PRD-000007';
       document.getElementById('addBomChild').value = 'PRD-000001';
+      document.getElementById('slProdId').value = 'PRD-000002';
+
+      const defaultExpected = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      document.getElementById('poDate').value = defaultExpected;
 
       document.getElementById('poLinesWrap').innerHTML = '';
       addPoDraftRow();
     }
 
     async function loadDashboard() {
-      const res = await fetch('/api/dashboard');
-      const data = await res.json();
+      const data = await apiJson('/api/dashboard');
       if (!data.ok) return showToast(data.error, false);
       const k = data.kpis;
       document.getElementById('kpiGrid').innerHTML = `
@@ -540,8 +555,7 @@
 
     async function loadInventory() {
       const wh = document.getElementById('invWhFilter').value;
-      const res = await fetch('/api/inventory' + (wh ? `?warehouse_id=${encodeURIComponent(wh)}` : ''));
-      const data = await res.json();
+      const data = await apiJson('/api/inventory' + (wh ? `?warehouse_id=${encodeURIComponent(wh)}` : ''));
       if (!data.ok) return showToast(data.error, false);
       document.getElementById('invBody').innerHTML = data.items.map(r => {
         const low = r.quantity_on_hand < r.reorder_level;
@@ -566,12 +580,11 @@
     async function updateStock(whId, prodId, inputId) {
       const val = parseStrictNumber(document.getElementById(inputId).value.trim(), 'Quantity');
       if (val === null) return;
-      const res = await fetch('/api/inventory/update', {
+      const data = await apiJson('/api/inventory/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ warehouse_id: whId, product_id: prodId, quantity_on_hand: val })
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadInventory();
     }
@@ -579,8 +592,7 @@
     async function loadBom() {
       const prodId = document.getElementById('bomProductSelect').value || 'PRD-000001';
       const whId = document.getElementById('bomWhSelect').value || 'WH-000001';
-      const res = await fetch(`/api/bom/${encodeURIComponent(prodId)}?warehouse_id=${encodeURIComponent(whId)}`);
-      const data = await res.json();
+      const data = await apiJson(`/api/bom/${encodeURIComponent(prodId)}?warehouse_id=${encodeURIComponent(whId)}`);
       if (!data.ok) return showToast(data.error, false);
 
       const banner = document.getElementById('bomFeasibilityBanner');
@@ -613,19 +625,17 @@
       const component_product_id = document.getElementById('addBomChild').value;
       const quantity_required = parseStrictNumber(document.getElementById('addBomQty').value.trim(), 'Quantity Required');
       if (quantity_required === null) return;
-      const res = await fetch('/api/bom/add', {
+      const data = await apiJson('/api/bom/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parent_product_id, component_product_id, quantity_required })
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadBom();
     }
 
     async function loadProcurement() {
-      const res = await fetch('/api/procurement');
-      const data = await res.json();
+      const data = await apiJson('/api/procurement');
       if (!data.ok) return showToast(data.error, false);
       document.getElementById('poBody').innerHTML = data.purchase_orders.map(p => {
         const canReceive = !['Received', 'Cancelled'].includes(p.status);
@@ -660,19 +670,17 @@
     }
 
     async function updatePoStatus(poId, status) {
-      const res = await fetch('/api/procurement/status', {
+      const data = await apiJson('/api/procurement/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ po_id: poId, status })
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadProcurement();
     }
 
     async function loadShipments() {
-      const res = await fetch('/api/shipments');
-      const data = await res.json();
+      const data = await apiJson('/api/shipments');
       if (!data.ok) return showToast(data.error, false);
       document.getElementById('shipBody').innerHTML = data.shipments.map(s => {
         let actions = '<small style="color:var(--muted)">Completed</small>';
@@ -701,12 +709,11 @@
     }
 
     async function updateShipmentStatus(shipmentId, status) {
-      const res = await fetch('/api/shipments/status', {
+      const data = await apiJson('/api/shipments/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shipment_id: shipmentId, status })
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadShipments();
     }
@@ -725,18 +732,21 @@
           unit_cost: cost,
         });
       }
+      const prodIds = lines.map(l => l.product_id);
+      if (new Set(prodIds).size !== prodIds.length) {
+        return showToast('Duplicate product in PO lines. Please choose distinct products.', false);
+      }
       const payload = {
         supplier_id: document.getElementById('poSupSelect').value,
         warehouse_id: document.getElementById('poWhSelect').value,
         expected_delivery_date: document.getElementById('poDate').value || null,
         lines,
       };
-      const res = await fetch('/api/procurement/create-po', {
+      const data = await apiJson('/api/procurement/create-po', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadProcurement();
     }
@@ -759,12 +769,11 @@
         product_id: document.getElementById('shProd').value,
         quantity_shipped,
       };
-      const res = await fetch('/api/shipments/create', {
+      const data = await apiJson('/api/shipments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadShipments();
     }
@@ -774,12 +783,11 @@
       const product_id = document.getElementById('slProdId').value;
       const quantity_shipped = parseStrictNumber(document.getElementById('slQty').value.trim(), 'Quantity Shipped');
       if (quantity_shipped === null) return;
-      const res = await fetch('/api/shipments/add-line', {
+      const data = await apiJson('/api/shipments/add-line', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shipment_id, product_id, quantity_shipped })
       });
-      const data = await res.json();
       showToast(data.ok ? data.message : data.error, data.ok);
       if (data.ok) loadShipments();
     }

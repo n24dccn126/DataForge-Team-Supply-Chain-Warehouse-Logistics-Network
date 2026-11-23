@@ -12,5 +12,12 @@ if not exist ".env" (
     pause
     exit /b 1
 )
-uv run app.py
+where uv >nul 2>nul
+if %errorlevel%==0 (
+    uv run app.py
+) else if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" app.py
+) else (
+    python app.py
+)
 pause

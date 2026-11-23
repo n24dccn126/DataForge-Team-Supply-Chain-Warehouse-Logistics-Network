@@ -3,6 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from flask import Flask, jsonify, render_template, request
 import pymysql
+from pymysql.constants import CLIENT
 from pymysql.cursors import DictCursor
 from dotenv import load_dotenv
 
@@ -21,6 +22,7 @@ def get_db_connection():
         charset="utf8mb4",
         cursorclass=DictCursor,
         autocommit=False,
+        client_flag=CLIENT.FOUND_ROWS,
     )
 
 
@@ -606,7 +608,7 @@ def api_shipment_status():
         with conn.cursor() as cur:
             if new_status == "Delivered":
                 cur.execute(
-                    "UPDATE shipment SET status = %s, delivery_date = CURRENT_TIMESTAMP WHERE shipment_id = %s",
+                    "UPDATE shipment SET status = %s, delivery_date = GREATEST(CURRENT_TIMESTAMP, ship_date) WHERE shipment_id = %s",
                     (new_status, shipment_id),
                 )
             else:
