@@ -136,8 +136,9 @@ INSERT INTO inventory (warehouse_id, product_id, quantity_on_hand) VALUES
 
 -- -----------------------------------------------------------------------------
 -- 8. PURCHASE_ORDER & 9. PO_LINE (6 POs, 11 Lines — Inserted before Shipments)
--- Note: PO-000001 & PO-000002 are inserted as 'Ordered', lines added, then
---       transitioned to 'Received' so Trigger 7a & 7c work cleanly!
+-- Note: PO-000001 & PO-000002 are inserted as 'Ordered', PO-000006 as 'Pending',
+--       lines added, then transitioned to 'Received' / 'Cancelled' so Triggers 7a,
+--       7c & 8a-8c work cleanly!
 -- -----------------------------------------------------------------------------
 INSERT INTO purchase_order (po_id, supplier_id, warehouse_id, order_date, expected_delivery_date, status) VALUES
     ('PO-000001', 'SUP-000001', 'WH-000001', '2026-09-10', '2026-09-15', 'Ordered'),
@@ -145,7 +146,7 @@ INSERT INTO purchase_order (po_id, supplier_id, warehouse_id, order_date, expect
     ('PO-000003', 'SUP-000002', 'WH-000005', '2026-10-05', '2026-10-12', 'Ordered'),
     ('PO-000004', 'SUP-000003', 'WH-000002', '2026-10-12', '2026-10-17', 'Approved'),
     ('PO-000005', 'SUP-000005', 'WH-000003', '2026-10-20', '2026-10-28', 'Pending'),
-    ('PO-000006', 'SUP-000001', 'WH-000002', '2026-10-25', '2026-10-30', 'Cancelled');
+    ('PO-000006', 'SUP-000001', 'WH-000002', '2026-10-25', '2026-10-30', 'Pending');
 
 INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost) VALUES
     ('PO-000001', 'PRD-000007', 500,  19.00), -- Historical negotiated cost < current 19.50
@@ -160,8 +161,9 @@ INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost) VALUES
     ('PO-000005', 'PRD-000003',  40, 275.00),
     ('PO-000006', 'PRD-000007', 200,  19.50);
 
--- Transition completed POs to 'Received' (fires Trigger 7c to credit WH-000001!)
+-- Transition completed/cancelled POs to final state (fires Trigger 7c to credit WH-000001!)
 UPDATE purchase_order SET status = 'Received' WHERE po_id IN ('PO-000001', 'PO-000002');
+UPDATE purchase_order SET status = 'Cancelled' WHERE po_id = 'PO-000006';
 
 -- -----------------------------------------------------------------------------
 -- 10. SHIPMENT, 11. WAREHOUSE_TRANSFER, 12. CUSTOMER_DELIVERY, 13. SHIPMENT_LINE

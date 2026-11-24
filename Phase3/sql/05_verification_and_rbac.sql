@@ -119,6 +119,19 @@ ROLLBACK;
 -- TC16: Reverting a Received PO back to Ordered (Expected: ERROR 1644 — Trigger 7b)
 -- UPDATE purchase_order SET status = 'Ordered' WHERE po_id = 'PO-000001';
 
+-- TC17: Bypassing BR1 Disjoint via UPDATE on subtype table (Expected: ERROR 1644 — Trigger 2b / 3b)
+-- UPDATE customer_delivery SET shipment_id = 'SHP-000002' WHERE shipment_id = 'SHP-000006';
+
+-- TC18: Bypassing BR1 Total Specialization via direct subtype DELETE (Expected: ERROR 1644 — Trigger 2c / 3c)
+-- DELETE FROM warehouse_transfer WHERE shipment_id = 'SHP-000002';
+
+-- TC19: Modifying po_line on an already Received/Cancelled PO (Expected: ERROR 1644 — Trigger 8a / 8b / 8c)
+-- UPDATE po_line SET quantity_ordered = 99999 WHERE po_id = 'PO-000001' AND product_id = 'PRD-000007';
+
+-- TC20: Ordering a product not offered by the PO's supplier in supplier_product (Expected: ERROR 1644 — Trigger 8a)
+-- INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost)
+-- VALUES ('PO-000004', 'PRD-000001', 5, 2100.00); -- SUP-000003 does not supply PRD-000001
+
 
 -- =============================================================================
 -- SECTION 5.2: ROLE-BASED ACCESS CONTROL (RBAC — MySQL 8.0 Roles)
@@ -162,12 +175,14 @@ GRANT SELECT ON supply_chain_logistics_db.warehouse TO 'role_purchasing_staff';
 GRANT SELECT ON supply_chain_logistics_db.inventory TO 'role_purchasing_staff';
 GRANT SELECT ON supply_chain_logistics_db.v_restock_alerts TO 'role_purchasing_staff';
 
--- (d) Warehouse Staff (FR3, FR7): Process shipments & goods receipts; read-only on inventory/products
+-- (d) Warehouse Staff (FR3, FR7): Process shipments & goods receipts; read-only on inventory/products;
+--     column-level SELECT on customer (customer_id, name only) so PII (email, phone, address) stays hidden (NFR2)
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.warehouse_transfer TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.customer_delivery TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment_line TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.goods_receipt TO 'role_warehouse_staff';
+GRANT SELECT (customer_id, name) ON supply_chain_logistics_db.customer TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.inventory TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.product TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.warehouse TO 'role_warehouse_staff';
@@ -215,3 +230,26 @@ SET DEFAULT ROLE ALL TO
 REVOKE DELETE ON supply_chain_logistics_db.product FROM 'role_product_manager';
 
 FLUSH PRIVILEGES;
+
+-- =============================================================================
+-- SECTION 5.3: NFR2 ENCRYPTION-AT-REST VERIFICATION (TDE & AES-256 DEMO)
+-- =============================================================================
+-- 1) Production Infrastructure Level — MySQL 8.0 InnoDB Tablespace Encryption (TDE):
+--    (Requires keyring component/plugin enabled in my.cnf on production server)
+-- ALTER TABLE supplier ENCRYPTION = 'Y';
+-- ALTER TABLE customer ENCRYPTION = 'Y';
+
+-- 2) Column-Level AES-256 Encryption / Decryption Demonstration (Runnable anywhere):
+--    Demonstrates encrypting & decrypting Customer/Supplier PII (contact_email, phone, address)
+--    using MySQL 8.0 native AES_ENCRYPT / AES_DECRYPT with a 256-bit SHA-2 key.
+SET block_encryption_mode = 'aes-256-cbc';
+SET @nfr2_key = UNHEX(SHA2('DATAFORGE_NFR2_DEMO_KEY_2026', 256));
+SET @nfr2_iv  = RANDOM_BYTES(16);
+
+SELECT
+    customer_id,
+    name,
+    HEX(AES_ENCRYPT(contact_email, @nfr2_key, @nfr2_iv)) AS encrypted_email_hex,
+    CAST(AES_DECRYPT(AES_ENCRYPT(contact_email, @nfr2_key, @nfr2_iv), @nfr2_key, @nfr2_iv) AS CHAR) AS decrypted_email_verified
+FROM customer
+LIMIT 2;

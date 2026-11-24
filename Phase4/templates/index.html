@@ -289,7 +289,7 @@
       <div class="card">
         <h2>Create Purchase Order — Dat hang Nha cung cap nhieu dong (FR2 &amp; BR5)</h2>
         <div class="controls">
-          <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect"></select></div>
+          <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect" onchange="onPoSupplierChange()"></select></div>
           <div class="field"><label>Receiving Warehouse</label><select id="poWhSelect"></select></div>
           <div class="field"><label>Expected Date</label><input id="poDate" type="date" /></div>
           <button class="btn btn-sm" type="button" onclick="addPoDraftRow()">+ Add Product Line</button>
@@ -461,22 +461,54 @@
     }
 
     let cachedProdOpts = '';
+    let supplierCatalogBySup = {};
+
+    function onPoProductChange(selEl) {
+      const opt = selEl.selectedOptions && selEl.selectedOptions[0];
+      if (!opt) return;
+      const costInput = selEl.closest('.po-draft-row')?.querySelector('.po-line-cost');
+      if (costInput && opt.dataset.cost) {
+        costInput.value = Number(opt.dataset.cost).toFixed(2);
+      }
+    }
+
+    function onPoSupplierChange() {
+      const supId = document.getElementById('poSupSelect').value;
+      const items = supplierCatalogBySup[supId] || [];
+      const leadDays = items.length > 0 ? Number(items[0].lead_time_days || 7) : 7;
+      document.getElementById('poDate').value = new Date(Date.now() + leadDays * 86400000).toISOString().slice(0, 10);
+      document.getElementById('poLinesWrap').innerHTML = '';
+      if (items.length > 0) addPoDraftRow();
+    }
 
     function addPoDraftRow() {
+      const supId = document.getElementById('poSupSelect').value;
+      const items = supplierCatalogBySup[supId] || [];
+      if (items.length === 0) {
+        showToast('Selected supplier has no catalog products in supplier_product.', false);
+        return;
+      }
       const wrap = document.getElementById('poLinesWrap');
       const used = new Set(Array.from(wrap.querySelectorAll('.po-line-prod')).map(s => s.value));
+      const available = items.find(it => !used.has(it.product_id));
+      if (!available) {
+        showToast('All catalog products offered by this supplier are already in the PO.', false);
+        return;
+      }
+      const supProdOpts = items.map(it =>
+        `<option value="${esc(it.product_id)}" data-cost="${esc(it.supply_cost)}" data-lead="${esc(it.lead_time_days)}">${esc(it.product_id)} — ${esc(it.product_name)} ($${fmt(it.supply_cost)}, ${esc(it.lead_time_days)}d)</option>`
+      ).join('');
       const row = document.createElement('div');
       row.className = 'controls po-draft-row';
       row.style.marginBottom = '8px';
       row.innerHTML = `
-        <div class="field"><label>Product</label><select class="po-line-prod">${cachedProdOpts}</select></div>
+        <div class="field"><label>Product (Offered by Supplier)</label><select class="po-line-prod" onchange="onPoProductChange(this)">${supProdOpts}</select></div>
         <div class="field"><label>Quantity</label><input class="po-line-qty" type="number" value="50" min="1" style="width:90px" /></div>
-        <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="25.00" step="0.5" min="0.01" style="width:105px" /></div>
+        <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="${Number(available.supply_cost).toFixed(2)}" step="0.5" min="0.01" style="width:105px" /></div>
         <button class="btn btn-sm btn-warn" type="button" onclick="this.parentElement.remove()">Remove</button>
       `;
       const sel = row.querySelector('.po-line-prod');
-      const nextOpt = Array.from(sel.options).find(o => !used.has(o.value));
-      if (nextOpt) sel.value = nextOpt.value;
+      sel.value = available.product_id;
       wrap.appendChild(row);
     }
 
@@ -496,6 +528,12 @@
       const custOpts = (data.customers || []).map(c => `<option value="${esc(c.customer_id)}">${esc(c.customer_id)} — ${esc(c.name)}</option>`).join('');
       document.getElementById('shCust').innerHTML = custOpts;
 
+      supplierCatalogBySup = {};
+      for (const sp of (data.supplier_products || [])) {
+        if (!supplierCatalogBySup[sp.supplier_id]) supplierCatalogBySup[sp.supplier_id] = [];
+        supplierCatalogBySup[sp.supplier_id].push(sp);
+      }
+
       cachedProdOpts = data.products.map(p => `<option value="${esc(p.product_id)}">${esc(p.product_id)} — ${esc(p.name)}</option>`).join('');
       document.getElementById('bomProductSelect').innerHTML = cachedProdOpts;
       document.getElementById('addBomParent').innerHTML = cachedProdOpts;
@@ -506,11 +544,7 @@
       document.getElementById('addBomChild').value = 'PRD-000001';
       document.getElementById('slProdId').value = 'PRD-000002';
 
-      const defaultExpected = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-      document.getElementById('poDate').value = defaultExpected;
-
-      document.getElementById('poLinesWrap').innerHTML = '';
-      addPoDraftRow();
+      onPoSupplierChange();
     }
 
     async function loadDashboard() {

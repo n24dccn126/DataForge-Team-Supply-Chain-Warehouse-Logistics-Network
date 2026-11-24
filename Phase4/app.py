@@ -232,12 +232,25 @@ def api_products():
             suppliers = serialize_rows(cur.fetchall())
             cur.execute("SELECT customer_id, name FROM customer ORDER BY customer_id")
             customers = serialize_rows(cur.fetchall())
+            cur.execute("""
+                SELECT
+                    sp.supplier_id,
+                    sp.product_id,
+                    p.name AS product_name,
+                    sp.supply_cost,
+                    sp.lead_time_days
+                FROM supplier_product AS sp
+                INNER JOIN product AS p ON sp.product_id = p.product_id
+                ORDER BY sp.supplier_id ASC, sp.product_id ASC
+            """)
+            supplier_products = serialize_rows(cur.fetchall())
         return jsonify({
             "ok": True,
             "products": products,
             "warehouses": warehouses,
             "suppliers": suppliers,
             "customers": customers,
+            "supplier_products": supplier_products,
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": format_db_error(exc)}), 500

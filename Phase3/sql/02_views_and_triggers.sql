@@ -118,7 +118,7 @@ LEFT JOIN (
     ON s.shipment_id = sl_agg.shipment_id;
 
 -- =============================================================================
--- PART B: TRIGGERS (16 Triggers Enforcing BR1-BR7, FR2, FR3, FR5, FR7, NFR6)
+-- PART B: TRIGGERS (22 Triggers Enforcing BR1-BR7, FR2, FR3, FR5, FR7, NFR6)
 -- =============================================================================
 
 DELIMITER $$
@@ -260,13 +260,35 @@ CREATE TRIGGER trg_validate_warehouse_transfer_update
 BEFORE UPDATE ON warehouse_transfer
 FOR EACH ROW
 BEGIN
+    DECLARE v_ship_type VARCHAR(30);
     DECLARE v_origin_wh VARCHAR(10);
     DECLARE v_status VARCHAR(20);
+    DECLARE v_exists_cd INT DEFAULT 0;
 
-    SELECT origin_warehouse_id, status
-    INTO v_origin_wh, v_status
+    IF NEW.shipment_id <> OLD.shipment_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Cannot reassign shipment_id on an existing warehouse_transfer record.';
+    END IF;
+
+    SELECT shipment_type, origin_warehouse_id, status
+    INTO v_ship_type, v_origin_wh, v_status
     FROM shipment
     WHERE shipment_id = NEW.shipment_id;
+
+    IF v_ship_type <> 'WAREHOUSE_TRANSFER' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment must have shipment_type = WAREHOUSE_TRANSFER.';
+    END IF;
+
+    SELECT COUNT(*)
+    INTO v_exists_cd
+    FROM customer_delivery
+    WHERE shipment_id = NEW.shipment_id;
+
+    IF v_exists_cd > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment already exists in customer_delivery (disjoint constraint).';
+    END IF;
 
     IF v_status = 'Delivered' THEN
         SIGNAL SQLSTATE '45000'
@@ -280,7 +302,21 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 3: trg_validate_customer_delivery_insert (BR1)
+-- TRIGGER 2c: trg_prevent_warehouse_transfer_delete (BR1 Total Specialization)
+-- Blocks direct deletion of subtype row while parent shipment exists.
+-- (Note: Deleting an undelivered parent shipment cascades cleanly because
+--  InnoDB FK ON DELETE CASCADE does not activate child table triggers.)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_prevent_warehouse_transfer_delete
+BEFORE DELETE ON warehouse_transfer
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'BR1 Violation: Cannot delete warehouse_transfer subtype directly while parent shipment exists (total specialization).';
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 3a: trg_validate_customer_delivery_insert (BR1)
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_validate_customer_delivery_insert
 BEFORE INSERT ON customer_delivery
@@ -311,8 +347,62 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 4a: trg_check_and_deduct_inventory_on_ship (BR7, BR3 & NFR6 FOR UPDATE)
--- Locks inventory row with FOR UPDATE, validates stock, and deducts atomically.
+-- TRIGGER 3b: trg_validate_customer_delivery_update (BR1 & State Guard on UPDATE)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_customer_delivery_update
+BEFORE UPDATE ON customer_delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_ship_type VARCHAR(30);
+    DECLARE v_status VARCHAR(20);
+    DECLARE v_exists_wt INT DEFAULT 0;
+
+    IF NEW.shipment_id <> OLD.shipment_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Cannot reassign shipment_id on an existing customer_delivery record.';
+    END IF;
+
+    SELECT shipment_type, status
+    INTO v_ship_type, v_status
+    FROM shipment
+    WHERE shipment_id = NEW.shipment_id;
+
+    IF v_ship_type <> 'CUSTOMER_DELIVERY' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment must have shipment_type = CUSTOMER_DELIVERY.';
+    END IF;
+
+    SELECT COUNT(*)
+    INTO v_exists_wt
+    FROM warehouse_transfer
+    WHERE shipment_id = NEW.shipment_id;
+
+    IF v_exists_wt > 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment already exists in warehouse_transfer (disjoint constraint).';
+    END IF;
+
+    IF v_status = 'Delivered' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot modify a Delivered customer delivery.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 3c: trg_prevent_customer_delivery_delete (BR1 Total Specialization)
+-- Blocks direct deletion of subtype row while parent shipment exists.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_prevent_customer_delivery_delete
+BEFORE DELETE ON customer_delivery
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'BR1 Violation: Cannot delete customer_delivery subtype directly while parent shipment exists (total specialization).';
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 4a: trg_check_and_deduct_inventory_on_ship (BR7, BR3, BR1 & NFR6 FOR UPDATE)
+-- Verifies subtype existence, locks inventory row with FOR UPDATE, validates stock, and deducts atomically.
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_check_and_deduct_inventory_on_ship
 BEFORE INSERT ON shipment_line
@@ -320,16 +410,33 @@ FOR EACH ROW
 BEGIN
     DECLARE v_origin_wh VARCHAR(10);
     DECLARE v_ship_status VARCHAR(20);
+    DECLARE v_ship_type VARCHAR(30);
+    DECLARE v_subtype_cnt INT DEFAULT 0;
     DECLARE v_available_qty INT UNSIGNED DEFAULT NULL;
 
-    SELECT origin_warehouse_id, status
-    INTO v_origin_wh, v_ship_status
+    SELECT origin_warehouse_id, status, shipment_type
+    INTO v_origin_wh, v_ship_status, v_ship_type
     FROM shipment
     WHERE shipment_id = NEW.shipment_id;
 
     IF v_ship_status = 'Delivered' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot add items to an already Delivered shipment.';
+    END IF;
+
+    IF v_ship_type = 'WAREHOUSE_TRANSFER' THEN
+        SELECT COUNT(*) INTO v_subtype_cnt
+        FROM warehouse_transfer
+        WHERE shipment_id = NEW.shipment_id;
+    ELSE
+        SELECT COUNT(*) INTO v_subtype_cnt
+        FROM customer_delivery
+        WHERE shipment_id = NEW.shipment_id;
+    END IF;
+
+    IF v_subtype_cnt = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment must have a matching subtype record before adding shipment lines.';
     END IF;
 
     SELECT quantity_on_hand
@@ -518,20 +625,36 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 6b: trg_validate_shipment_update (State Machine + BR1/BR2 + Anti-Leak)
--- Blocks reverting Delivered status, changing shipment_type, or changing
--- origin_warehouse_id after shipment_lines have been added.
+-- TRIGGER 6b: trg_validate_shipment_update (State Machine + BR1 Total/Disjoint + BR2 + Anti-Leak)
+-- Blocks reverting Delivered status, changing shipment_type, updating without a
+-- valid subtype record (BR1 total), or changing origin_warehouse_id after lines exist.
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_validate_shipment_update
 BEFORE UPDATE ON shipment
 FOR EACH ROW
 BEGIN
     DECLARE v_dest_wh VARCHAR(10) DEFAULT NULL;
+    DECLARE v_subtype_cnt INT DEFAULT 0;
     DECLARE v_line_count INT DEFAULT 0;
 
     IF NEW.shipment_type <> OLD.shipment_type THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'BR1 Violation: Cannot change shipment_type after shipment creation.';
+    END IF;
+
+    IF NEW.shipment_type = 'WAREHOUSE_TRANSFER' THEN
+        SELECT COUNT(*) INTO v_subtype_cnt
+        FROM warehouse_transfer
+        WHERE shipment_id = NEW.shipment_id;
+    ELSE
+        SELECT COUNT(*) INTO v_subtype_cnt
+        FROM customer_delivery
+        WHERE shipment_id = NEW.shipment_id;
+    END IF;
+
+    IF v_subtype_cnt = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BR1 Violation: Shipment is missing its required subtype record (total specialization).';
     END IF;
 
     IF NEW.origin_warehouse_id <> OLD.origin_warehouse_id THEN
@@ -640,12 +763,14 @@ BEGIN
 END$$
 
 -- -----------------------------------------------------------------------------
--- TRIGGER 7b: trg_validate_po_update (PO State Machine — Prevents Double-Receiving)
+-- TRIGGER 7b: trg_validate_po_update (PO State Machine & Supplier Catalog Guard)
 -- -----------------------------------------------------------------------------
 CREATE TRIGGER trg_validate_po_update
 BEFORE UPDATE ON purchase_order
 FOR EACH ROW
 BEGIN
+    DECLARE v_invalid_lines INT DEFAULT 0;
+
     IF OLD.status = 'Received' AND NEW.status <> 'Received' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot revert a Received purchase order.';
@@ -654,6 +779,30 @@ BEGIN
     IF OLD.status = 'Cancelled' AND NEW.status <> 'Cancelled' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot reactivate a Cancelled purchase order.';
+    END IF;
+
+    IF OLD.status IN ('Received', 'Cancelled')
+       AND (NEW.supplier_id <> OLD.supplier_id OR NEW.warehouse_id <> OLD.warehouse_id) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot change supplier_id or warehouse_id on a closed (Received/Cancelled) purchase order.';
+    END IF;
+
+    IF NEW.supplier_id <> OLD.supplier_id THEN
+        SELECT COUNT(*)
+        INTO v_invalid_lines
+        FROM po_line AS pol
+        WHERE pol.po_id = NEW.po_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM supplier_product AS sp
+              WHERE sp.supplier_id = NEW.supplier_id
+                AND sp.product_id = pol.product_id
+          );
+
+        IF v_invalid_lines > 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Catalog Violation: New supplier does not supply all existing products in po_line.';
+        END IF;
     END IF;
 END$$
 
@@ -676,6 +825,99 @@ BEGIN
         WHERE pol.po_id = NEW.po_id
         ON DUPLICATE KEY UPDATE
             quantity_on_hand = inventory.quantity_on_hand + VALUES(quantity_on_hand);
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 8a: trg_validate_po_line_insert (Locks Closed POs & Enforces supplier_product)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_po_line_insert
+BEFORE INSERT ON po_line
+FOR EACH ROW
+BEGIN
+    DECLARE v_po_status VARCHAR(20);
+    DECLARE v_supplier_id VARCHAR(10);
+    DECLARE v_sp_exists INT DEFAULT 0;
+
+    SELECT status, supplier_id
+    INTO v_po_status, v_supplier_id
+    FROM purchase_order
+    WHERE po_id = NEW.po_id;
+
+    IF v_po_status IN ('Received', 'Cancelled') THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot add po_line items to an already Received or Cancelled purchase order.';
+    END IF;
+
+    SELECT COUNT(*)
+    INTO v_sp_exists
+    FROM supplier_product
+    WHERE supplier_id = v_supplier_id
+      AND product_id = NEW.product_id;
+
+    IF v_sp_exists = 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Catalog Violation: Selected supplier does not supply this product in supplier_product.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 8b: trg_validate_po_line_update (Locks Closed POs & Enforces supplier_product)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_validate_po_line_update
+BEFORE UPDATE ON po_line
+FOR EACH ROW
+BEGIN
+    DECLARE v_po_status VARCHAR(20);
+    DECLARE v_supplier_id VARCHAR(10);
+    DECLARE v_sp_exists INT DEFAULT 0;
+
+    IF NEW.po_id <> OLD.po_id THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Integrity Violation: Cannot reassign po_id on an existing po_line.';
+    END IF;
+
+    SELECT status, supplier_id
+    INTO v_po_status, v_supplier_id
+    FROM purchase_order
+    WHERE po_id = OLD.po_id;
+
+    IF v_po_status IN ('Received', 'Cancelled') THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot modify po_line items of an already Received or Cancelled purchase order.';
+    END IF;
+
+    IF NEW.product_id <> OLD.product_id THEN
+        SELECT COUNT(*)
+        INTO v_sp_exists
+        FROM supplier_product
+        WHERE supplier_id = v_supplier_id
+          AND product_id = NEW.product_id;
+
+        IF v_sp_exists = 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Catalog Violation: Selected supplier does not supply this product in supplier_product.';
+        END IF;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 8c: trg_prevent_po_line_delete_on_closed_po (Locks Closed PO Audit History)
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_prevent_po_line_delete_on_closed_po
+BEFORE DELETE ON po_line
+FOR EACH ROW
+BEGIN
+    DECLARE v_po_status VARCHAR(20);
+
+    SELECT status
+    INTO v_po_status
+    FROM purchase_order
+    WHERE po_id = OLD.po_id;
+
+    IF v_po_status IN ('Received', 'Cancelled') THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot delete po_line items from an already Received or Cancelled purchase order.';
     END IF;
 END$$
 
