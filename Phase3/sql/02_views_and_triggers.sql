@@ -118,7 +118,7 @@ LEFT JOIN (
     ON s.shipment_id = sl_agg.shipment_id;
 
 -- =============================================================================
--- PART B: TRIGGERS (22 Triggers Enforcing BR1-BR7, FR2, FR3, FR5, FR7, NFR6)
+-- PART B: TRIGGERS (24 Triggers Enforcing BR1-BR7, FR1-FR7, NFR6)
 -- =============================================================================
 
 DELIMITER $$
@@ -439,12 +439,15 @@ BEGIN
             SET MESSAGE_TEXT = 'BR1 Violation: Shipment must have a matching subtype record before adding shipment lines.';
     END IF;
 
-    SELECT quantity_on_hand
-    INTO v_available_qty
-    FROM inventory
-    WHERE warehouse_id = v_origin_wh
-      AND product_id = NEW.product_id
-    FOR UPDATE;
+    BEGIN
+        DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_available_qty = NULL;
+        SELECT quantity_on_hand
+        INTO v_available_qty
+        FROM inventory
+        WHERE warehouse_id = v_origin_wh
+          AND product_id = NEW.product_id
+        FOR UPDATE;
+    END;
 
     IF v_available_qty IS NULL OR NEW.quantity_shipped > v_available_qty THEN
         SIGNAL SQLSTATE '45000'
@@ -488,12 +491,15 @@ BEGIN
     SET v_delta = CAST(NEW.quantity_shipped AS SIGNED) - CAST(OLD.quantity_shipped AS SIGNED);
 
     IF v_delta > 0 THEN
-        SELECT quantity_on_hand
-        INTO v_available_qty
-        FROM inventory
-        WHERE warehouse_id = v_origin_wh
-          AND product_id = NEW.product_id
-        FOR UPDATE;
+        BEGIN
+            DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_available_qty = NULL;
+            SELECT quantity_on_hand
+            INTO v_available_qty
+            FROM inventory
+            WHERE warehouse_id = v_origin_wh
+              AND product_id = NEW.product_id
+            FOR UPDATE;
+        END;
 
         IF v_available_qty IS NULL OR v_delta > v_available_qty THEN
             SIGNAL SQLSTATE '45000'
@@ -577,18 +583,28 @@ BEGIN
           AND po.status IN ('Pending', 'Approved', 'Ordered');
 
         IF v_open_po_count = 0 THEN
-            SELECT supplier_id, supply_cost, lead_time_days
-            INTO v_best_supplier, v_best_cost, v_best_lead
-            FROM supplier_product
-            WHERE product_id = NEW.product_id
-            ORDER BY supply_cost ASC, lead_time_days ASC
-            LIMIT 1;
+            BEGIN
+                DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_best_supplier = NULL;
+                SELECT supplier_id, supply_cost, lead_time_days
+                INTO v_best_supplier, v_best_cost, v_best_lead
+                FROM supplier_product
+                WHERE product_id = NEW.product_id
+                ORDER BY supply_cost ASC, lead_time_days ASC
+                LIMIT 1;
+            END;
 
             IF v_best_supplier IS NOT NULL THEN
-                SELECT COALESCE(MAX(CAST(SUBSTRING(po_id, 4) AS UNSIGNED)), 0) + 1
-                INTO v_next_po_num
-                FROM purchase_order
-                FOR UPDATE;
+                -- O(log N) Clustered PK backward index scan (locks only latest PO row, not full table)
+                SET v_next_po_num = 1;
+                BEGIN
+                    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_next_po_num = 1;
+                    SELECT CAST(SUBSTRING(po_id, 4) AS UNSIGNED) + 1
+                    INTO v_next_po_num
+                    FROM purchase_order
+                    ORDER BY po_id DESC
+                    LIMIT 1
+                    FOR UPDATE;
+                END;
 
                 SET v_new_po_id = CONCAT('PO-', LPAD(v_next_po_num, 6, '0'));
 
@@ -677,6 +693,17 @@ BEGIN
     IF OLD.status = 'In Transit' AND NEW.status = 'Pending' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot revert an In Transit shipment back to Pending.';
+    END IF;
+
+    IF NEW.status = 'Delivered' THEN
+        SELECT COUNT(*) INTO v_line_count
+        FROM shipment_line
+        WHERE shipment_id = NEW.shipment_id;
+
+        IF v_line_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'State Violation: Cannot mark an empty shipment (0 shipment_line rows) as Delivered.';
+        END IF;
     END IF;
 
     IF NEW.shipment_type = 'WAREHOUSE_TRANSFER'
@@ -770,6 +797,7 @@ BEFORE UPDATE ON purchase_order
 FOR EACH ROW
 BEGIN
     DECLARE v_invalid_lines INT DEFAULT 0;
+    DECLARE v_po_line_count INT DEFAULT 0;
 
     IF OLD.status = 'Received' AND NEW.status <> 'Received' THEN
         SIGNAL SQLSTATE '45000'
@@ -779,6 +807,24 @@ BEGIN
     IF OLD.status = 'Cancelled' AND NEW.status <> 'Cancelled' THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot reactivate a Cancelled purchase order.';
+    END IF;
+
+    IF (OLD.status = 'Ordered' AND NEW.status IN ('Approved', 'Pending'))
+       OR (OLD.status = 'Approved' AND NEW.status = 'Pending') THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'State Violation: Cannot revert purchase order backward to an earlier open status.';
+    END IF;
+
+    IF NEW.status = 'Received' THEN
+        SELECT COUNT(*)
+        INTO v_po_line_count
+        FROM po_line
+        WHERE po_id = NEW.po_id;
+
+        IF v_po_line_count = 0 THEN
+            SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'State Violation: Cannot mark an empty purchase order (0 po_line rows) as Received.';
+        END IF;
     END IF;
 
     IF OLD.status IN ('Received', 'Cancelled')
@@ -918,6 +964,87 @@ BEGIN
     IF v_po_status IN ('Received', 'Cancelled') THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = 'State Violation: Cannot delete po_line items from an already Received or Cancelled purchase order.';
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 9a: trg_check_warehouse_capacity_insert (Warehouse Capacity Guard)
+-- Ensures total units stored in a warehouse never exceed warehouse.capacity.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_check_warehouse_capacity_insert
+BEFORE INSERT ON inventory
+FOR EACH ROW
+BEGIN
+    DECLARE v_capacity BIGINT UNSIGNED DEFAULT NULL;
+    DECLARE v_current_total BIGINT UNSIGNED DEFAULT 0;
+
+    IF NEW.quantity_on_hand > 0 THEN
+        SELECT MAX(capacity)
+        INTO v_capacity
+        FROM warehouse
+        WHERE warehouse_id = NEW.warehouse_id;
+
+        IF v_capacity IS NOT NULL THEN
+            SELECT COALESCE(SUM(quantity_on_hand), 0)
+            INTO v_current_total
+            FROM inventory
+            WHERE warehouse_id = NEW.warehouse_id;
+
+            IF (v_current_total + NEW.quantity_on_hand) > v_capacity THEN
+                SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Capacity Violation: Total warehouse inventory would exceed warehouse.capacity.';
+            END IF;
+        END IF;
+    END IF;
+END$$
+
+-- -----------------------------------------------------------------------------
+-- TRIGGER 9b: trg_check_warehouse_capacity_update (Warehouse Capacity Guard on UPDATE)
+-- Ensures stock increases or warehouse reassignments never exceed warehouse.capacity.
+-- -----------------------------------------------------------------------------
+CREATE TRIGGER trg_check_warehouse_capacity_update
+BEFORE UPDATE ON inventory
+FOR EACH ROW
+BEGIN
+    DECLARE v_capacity BIGINT UNSIGNED DEFAULT NULL;
+    DECLARE v_current_total BIGINT UNSIGNED DEFAULT 0;
+
+    IF NEW.warehouse_id <> OLD.warehouse_id THEN
+        IF NEW.quantity_on_hand > 0 THEN
+            SELECT MAX(capacity)
+            INTO v_capacity
+            FROM warehouse
+            WHERE warehouse_id = NEW.warehouse_id;
+
+            IF v_capacity IS NOT NULL THEN
+                SELECT COALESCE(SUM(quantity_on_hand), 0)
+                INTO v_current_total
+                FROM inventory
+                WHERE warehouse_id = NEW.warehouse_id;
+
+                IF (v_current_total + NEW.quantity_on_hand) > v_capacity THEN
+                    SIGNAL SQLSTATE '45000'
+                        SET MESSAGE_TEXT = 'Capacity Violation: Total warehouse inventory would exceed warehouse.capacity.';
+                END IF;
+            END IF;
+        END IF;
+    ELSEIF NEW.quantity_on_hand > OLD.quantity_on_hand THEN
+        SELECT MAX(capacity)
+        INTO v_capacity
+        FROM warehouse
+        WHERE warehouse_id = NEW.warehouse_id;
+
+        IF v_capacity IS NOT NULL THEN
+            SELECT COALESCE(SUM(quantity_on_hand), 0)
+            INTO v_current_total
+            FROM inventory
+            WHERE warehouse_id = NEW.warehouse_id;
+
+            IF (v_current_total + (NEW.quantity_on_hand - OLD.quantity_on_hand)) > v_capacity THEN
+                SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = 'Capacity Violation: Total warehouse inventory would exceed warehouse.capacity.';
+            END IF;
+        END IF;
     END IF;
 END$$
 

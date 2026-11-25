@@ -102,7 +102,7 @@
       margin-bottom: 20px;
       overflow-x: auto;
     }
-    .card h2 { font-size: 1.05rem; margin-bottom: 12px; color: var(--primary); display: flex; justify-content: space-between; align-items: center; }
+    .card h2 { font-size: 1.05rem; margin-bottom: 12px; color: var(--primary); display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; background: rgba(15,23,42,0.45); }
@@ -127,7 +127,13 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 7px 10px;
-      font-size: 0.88rem;
+      font-size: 0.86rem;
+    }
+    .filter-mini {
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      border-style: dashed;
+      color: var(--primary);
     }
     .btn {
       background: var(--primary);
@@ -140,8 +146,23 @@
       font-size: 0.85rem;
     }
     .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-sm { padding: 5px 10px; font-size: 0.78rem; }
+    .btn-ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
     .btn-warn { background: var(--warning); color: #0b1220; }
+    .pager {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(51,65,85,0.55);
+      font-size: 0.82rem;
+      color: var(--muted);
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .pager-btns { display: flex; gap: 6px; align-items: center; }
     .toast {
       position: fixed;
       bottom: 20px;
@@ -165,7 +186,7 @@
   <header>
     <div class="brand">
       <h1>DATAFORGE — Supply Chain &amp; Warehouse Logistics Network</h1>
-      <p>INT1313 Databases — Phase 4 Live Integration Demo (Flask + MySQL 8.0)</p>
+      <p>INT1313 Databases — Phase 4 Live Integration Demo (Flask + MySQL 8.0 · Scale-Ready Pagination &amp; Search)</p>
     </div>
     <div id="dbStatus" class="db-pill">Connecting to MySQL...</div>
   </header>
@@ -186,8 +207,14 @@
       <div class="card">
         <h2>
           <span>Active Restock Alerts (View: <code>v_restock_alerts</code> — FR5)</span>
-          <button class="btn btn-sm" onclick="loadDashboard()">Refresh</button>
+          <button class="btn btn-sm" onclick="loadDashboard(1)">Refresh</button>
         </h2>
+        <div class="controls">
+          <div class="field">
+            <label>Search Alerts (Warehouse / Product / Supplier)</label>
+            <input id="alertSearch" type="search" placeholder="e.g. WH-000001, PRD-000004..." oninput="debouncedLoad('dash', () => loadDashboard(1))" style="width:280px" />
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -197,10 +224,17 @@
           </thead>
           <tbody id="alertsBody"></tbody>
         </table>
+        <div id="alertsPager" class="pager"></div>
       </div>
 
       <div class="card">
         <h2>Warehouse Capacity &amp; Valuation Summary (View: <code>v_warehouse_inventory_summary</code>)</h2>
+        <div class="controls">
+          <div class="field">
+            <label>Search Warehouse / Manager</label>
+            <input id="whSumSearch" type="search" placeholder="e.g. TP.HCM, Binh Duong..." oninput="debouncedLoad('whsum', () => loadDashboard(dashState.page, 1))" style="width:260px" />
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -210,6 +244,7 @@
           </thead>
           <tbody id="whSummaryBody"></tbody>
         </table>
+        <div id="whSumPager" class="pager"></div>
       </div>
     </section>
 
@@ -224,11 +259,25 @@
         <div class="controls">
           <div class="field">
             <label>Filter by Warehouse</label>
-            <select id="invWhFilter" onchange="loadInventory()">
-              <option value="">All Warehouses</option>
+            <input id="invWhFilterSearch" class="filter-mini" type="search" placeholder="Type to filter warehouse..." />
+            <select id="invWhFilter" onchange="loadInventory(1)"></select>
+          </div>
+          <div class="field">
+            <label>Search SKU / Name / Category</label>
+            <input id="invSearch" type="search" placeholder="e.g. PRD-000005, Drone, Raw..." oninput="debouncedLoad('inv', () => loadInventory(1))" style="width:240px" />
+          </div>
+          <div class="field">
+            <label>Page Size</label>
+            <select id="invPageSize" onchange="loadInventory(1)">
+              <option value="20" selected>20 / page</option>
+              <option value="50">50 / page</option>
+              <option value="100">100 / page</option>
             </select>
           </div>
-          <button class="btn btn-sm" onclick="loadInventory()">Reload</button>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.84rem;padding-bottom:8px;cursor:pointer;">
+            <input id="invLowOnly" type="checkbox" onchange="loadInventory(1)" /> Low stock only
+          </label>
+          <button class="btn btn-sm" onclick="loadInventory(1)">Reload</button>
         </div>
         <table>
           <thead>
@@ -239,6 +288,7 @@
           </thead>
           <tbody id="invBody"></tbody>
         </table>
+        <div id="invPager" class="pager"></div>
       </div>
     </section>
 
@@ -249,10 +299,12 @@
         <div class="controls">
           <div class="field">
             <label>Parent Product</label>
+            <input id="bomProdFilter" class="filter-mini" type="search" placeholder="Filter product..." />
             <select id="bomProductSelect" onchange="loadBom()"></select>
           </div>
           <div class="field">
             <label>Assembly Warehouse (for Q10 Feasibility)</label>
+            <input id="bomWhFilter" class="filter-mini" type="search" placeholder="Filter warehouse..." />
             <select id="bomWhSelect" onchange="loadBom()"></select>
           </div>
           <button class="btn btn-sm" onclick="loadBom()">Explode BOM</button>
@@ -276,9 +328,17 @@
           <b>Trigger 1 (<code>WITH RECURSIVE</code>)</b> chan vong lap 3 cap!
         </p>
         <div class="controls">
-          <div class="field"><label>Parent Product</label><select id="addBomParent"></select></div>
-          <div class="field"><label>Component Product</label><select id="addBomChild"></select></div>
-          <div class="field"><label>Quantity Required</label><input id="addBomQty" type="number" value="1" min="1" style="width:90px" /></div>
+          <div class="field">
+            <label>Parent Product</label>
+            <input id="addBomParentFilter" class="filter-mini" type="search" placeholder="Filter parent..." />
+            <select id="addBomParent"></select>
+          </div>
+          <div class="field">
+            <label>Component Product</label>
+            <input id="addBomChildFilter" class="filter-mini" type="search" placeholder="Filter component..." />
+            <select id="addBomChild"></select>
+          </div>
+          <div class="field"><label>Quantity Required</label><input id="addBomQty" type="number" value="1" min="1" step="1" style="width:90px" /></div>
           <button class="btn btn-warn" onclick="addBomLink()">Insert BOM Link</button>
         </div>
       </div>
@@ -289,8 +349,16 @@
       <div class="card">
         <h2>Create Purchase Order — Dat hang Nha cung cap nhieu dong (FR2 &amp; BR5)</h2>
         <div class="controls">
-          <div class="field"><label>Supplier (NCC)</label><select id="poSupSelect" onchange="onPoSupplierChange()"></select></div>
-          <div class="field"><label>Receiving Warehouse</label><select id="poWhSelect"></select></div>
+          <div class="field">
+            <label>Supplier (NCC)</label>
+            <input id="poSupFilter" class="filter-mini" type="search" placeholder="Filter supplier..." />
+            <select id="poSupSelect" onchange="onPoSupplierChange()"></select>
+          </div>
+          <div class="field">
+            <label>Receiving Warehouse</label>
+            <input id="poWhFilter" class="filter-mini" type="search" placeholder="Filter warehouse..." />
+            <select id="poWhSelect"></select>
+          </div>
           <div class="field"><label>Expected Date</label><input id="poDate" type="date" /></div>
           <button class="btn btn-sm" type="button" onclick="addPoDraftRow()">+ Add Product Line</button>
           <button class="btn" type="button" onclick="createPO()">Create PO</button>
@@ -301,11 +369,28 @@
       <div class="card">
         <h2>
           <span>Purchase Orders (Includes Auto-Generated Restock POs from Trigger FR5)</span>
-          <button class="btn btn-sm" onclick="loadProcurement()">Refresh</button>
+          <button class="btn btn-sm" onclick="loadProcurement(1)">Refresh</button>
         </h2>
         <p class="hint">
           Demo Tip: Bam <b>Mark Received</b> tren mot don PO de kich hoat <b>Trigger 7c</b> tu dong cong ton kho vao kho nhan (khep kin vong restock)!
         </p>
+        <div class="controls">
+          <div class="field">
+            <label>Search PO / Supplier / Warehouse</label>
+            <input id="poSearch" type="search" placeholder="e.g. PO-000003, VietTech..." oninput="debouncedLoad('po', () => loadProcurement(1, procState.catPage))" style="width:240px" />
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <select id="poStatusFilter" onchange="loadProcurement(1, procState.catPage)">
+              <option value="">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="Approved">Approved</option>
+              <option value="Ordered">Ordered</option>
+              <option value="Received">Received</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -315,10 +400,17 @@
           </thead>
           <tbody id="poBody"></tbody>
         </table>
+        <div id="poPager" class="pager"></div>
       </div>
 
       <div class="card">
         <h2>Supplier Price &amp; Lead-Time Comparison (FR6)</h2>
+        <div class="controls">
+          <div class="field">
+            <label>Search Product / Supplier</label>
+            <input id="supCatSearch" type="search" placeholder="e.g. PRD-000007, STM32..." oninput="debouncedLoad('supcat', () => loadProcurement(procState.poPage, 1))" style="width:260px" />
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -327,6 +419,7 @@
           </thead>
           <tbody id="supCatBody"></tbody>
         </table>
+        <div id="supCatPager" class="pager"></div>
       </div>
     </section>
 
@@ -346,12 +439,28 @@
               <option value="WAREHOUSE_TRANSFER">WAREHOUSE_TRANSFER (Chuyen kho)</option>
             </select>
           </div>
-          <div class="field"><label>Origin Warehouse</label><select id="shOrigWh"></select></div>
-          <div class="field" id="shCustWrap"><label>Customer</label><select id="shCust"></select></div>
-          <div class="field" id="shDestWhWrap" style="display:none;"><label>Destination Warehouse</label><select id="shDestWh"></select></div>
+          <div class="field">
+            <label>Origin Warehouse</label>
+            <input id="shOrigWhFilter" class="filter-mini" type="search" placeholder="Filter origin..." />
+            <select id="shOrigWh"></select>
+          </div>
+          <div class="field" id="shCustWrap">
+            <label>Customer</label>
+            <input id="shCustFilter" class="filter-mini" type="search" placeholder="Filter customer..." />
+            <select id="shCust"></select>
+          </div>
+          <div class="field" id="shDestWhWrap" style="display:none;">
+            <label>Destination Warehouse</label>
+            <input id="shDestWhFilter" class="filter-mini" type="search" placeholder="Filter destination..." />
+            <select id="shDestWh"></select>
+          </div>
           <div class="field"><label>Carrier</label><input id="shCarrier" value="DataForge Express" style="width:150px" /></div>
-          <div class="field"><label>Product</label><select id="shProd"></select></div>
-          <div class="field"><label>Quantity</label><input id="shQty" type="number" value="2" min="1" style="width:85px" /></div>
+          <div class="field">
+            <label>Product</label>
+            <input id="shProdFilter" class="filter-mini" type="search" placeholder="Filter product..." />
+            <select id="shProd"></select>
+          </div>
+          <div class="field"><label>Quantity</label><input id="shQty" type="number" value="2" min="1" step="1" style="width:85px" /></div>
           <button class="btn" onclick="createShipment()">Create Shipment</button>
         </div>
       </div>
@@ -359,12 +468,35 @@
       <div class="card">
         <h2>
           <span>Unified Shipment Tracking (View: <code>v_shipment_tracking_overview</code> — FR3 &amp; FR7)</span>
-          <button class="btn btn-sm" onclick="loadShipments()">Refresh</button>
+          <button class="btn btn-sm" onclick="loadShipments(1)">Refresh</button>
         </h2>
         <p class="hint">
           Demo Tip: Doi trang thai mot don <code>WAREHOUSE_TRANSFER</code> (vd <code>SHP-000002</code>) sang <b>Delivered</b> de kich hoat
           <b>Trigger 6c</b> tu dong cong ton kho vao kho dich!
         </p>
+        <div class="controls">
+          <div class="field">
+            <label>Search Shipment / Carrier / Origin / Dest</label>
+            <input id="shipSearch" type="search" placeholder="e.g. SHP-000002, Can Tho..." oninput="debouncedLoad('ship', () => loadShipments(1))" style="width:260px" />
+          </div>
+          <div class="field">
+            <label>Type</label>
+            <select id="shipTypeFilter" onchange="loadShipments(1)">
+              <option value="">All Types</option>
+              <option value="WAREHOUSE_TRANSFER">WAREHOUSE_TRANSFER</option>
+              <option value="CUSTOMER_DELIVERY">CUSTOMER_DELIVERY</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <select id="shipStatusFilter" onchange="loadShipments(1)">
+              <option value="">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="In Transit">In Transit</option>
+              <option value="Delivered">Delivered</option>
+            </select>
+          </div>
+        </div>
         <table>
           <thead>
             <tr>
@@ -374,6 +506,7 @@
           </thead>
           <tbody id="shipBody"></tbody>
         </table>
+        <div id="shipPager" class="pager"></div>
       </div>
 
       <div class="card">
@@ -383,8 +516,12 @@
         </p>
         <div class="controls">
           <div class="field"><label>Shipment ID</label><input id="slShipId" value="SHP-000003" style="width:130px" /></div>
-          <div class="field"><label>Product</label><select id="slProdId"></select></div>
-          <div class="field"><label>Quantity Shipped</label><input id="slQty" type="number" value="9999" style="width:110px" /></div>
+          <div class="field">
+            <label>Product</label>
+            <input id="slProdFilter" class="filter-mini" type="search" placeholder="Filter product..." />
+            <select id="slProdId"></select>
+          </div>
+          <div class="field"><label>Quantity Shipped</label><input id="slQty" type="number" value="9999" min="1" step="1" style="width:110px" /></div>
           <button class="btn btn-warn" onclick="addShipmentLine()">Ship Item</button>
         </div>
       </div>
@@ -395,6 +532,16 @@
 
   <script>
     const fmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const _timers = {};
+    function debouncedLoad(key, fn, delay = 220) {
+      clearTimeout(_timers[key]);
+      _timers[key] = setTimeout(fn, delay);
+    }
+
+    const dashState = { page: 1, whPage: 1 };
+    const invState = { page: 1 };
+    const procState = { poPage: 1, catPage: 1 };
+    const shipState = { page: 1 };
 
     function showToast(msg, isOk = true) {
       const el = document.getElementById('toast');
@@ -419,16 +566,112 @@
       }
     }
 
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+
+    function renderPager(elId, pg, onPageFnName) {
+      const el = document.getElementById(elId);
+      if (!el || !pg) return;
+      const start = pg.total === 0 ? 0 : (pg.page - 1) * pg.page_size + 1;
+      const end = Math.min(pg.total, pg.page * pg.page_size);
+      el.innerHTML = `
+        <span>Showing <b>${start}–${end}</b> of <b>${pg.total.toLocaleString()}</b> records (Page ${pg.page} / ${pg.total_pages})</span>
+        <div class="pager-btns">
+          <button class="btn btn-sm btn-ghost" ${pg.page <= 1 ? 'disabled' : ''} onclick="${onPageFnName}(${pg.page - 1})">&laquo; Prev</button>
+          <button class="btn btn-sm btn-ghost" ${pg.page >= pg.total_pages ? 'disabled' : ''} onclick="${onPageFnName}(${pg.page + 1})">Next &raquo;</button>
+        </div>
+      `;
+    }
+
+    function foldSearchText(s) {
+      return String(s ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toLowerCase();
+    }
+
+    // Caps rendered <option> elements (default max 40) with live search input,
+    // preserves selectedVal even at index > 40 when filtering/backspacing,
+    // shows disabled empty state, and auto-filters #invWhFilter on search.
+    function bindSearchableSelect(filterInputId, selectId, items, getVal, getLabel, opts = {}) {
+      const input = document.getElementById(filterInputId);
+      const sel = document.getElementById(selectId);
+      if (!input || !sel) return;
+      const maxOpts = opts.maxOpts || 40;
+      const prefixHtml = opts.prefixHtml || '';
+      const hasAllPrefix = prefixHtml.includes('value=""');
+      let selectedVal = opts.defaultVal !== undefined ? String(opts.defaultVal) : '';
+
+      sel.addEventListener('change', () => {
+        selectedVal = sel.value;
+      });
+
+      function populate(fromInputEvent = false) {
+        const rawQ = input.value.trim();
+        const q = foldSearchText(rawQ);
+        const filtered = q
+          ? items.filter(it => foldSearchText(getLabel(it)).includes(q) || foldSearchText(getVal(it)).includes(q))
+          : items;
+
+        if (filtered.length === 0) {
+          sel.innerHTML = '<option value="" disabled selected>No matching results</option>';
+          return false;
+        }
+
+        if (hasAllPrefix && fromInputEvent) {
+          selectedVal = q !== '' ? String(getVal(filtered[0])) : '';
+        }
+
+        let sliced = filtered.slice(0, maxOpts);
+        if (selectedVal !== '') {
+          const picked = filtered.find(it => String(getVal(it)) === selectedVal)
+            || (!q ? items.find(it => String(getVal(it)) === selectedVal) : null);
+          if (picked && !sliced.some(it => String(getVal(it)) === selectedVal)) {
+            sliced = [picked, ...sliced.slice(0, maxOpts - 1)];
+          }
+        }
+
+        const moreCount = filtered.length - sliced.length;
+        const hintOpt = moreCount > 0
+          ? `<option value="" disabled>-- +${moreCount} more (type above to filter) --</option>`
+          : '';
+        sel.innerHTML = prefixHtml + sliced.map(it =>
+          `<option value="${esc(getVal(it))}">${esc(getLabel(it))}</option>`
+        ).join('') + hintOpt;
+
+        if (selectedVal !== '' && Array.from(sel.options).some(o => !o.disabled && o.value === selectedVal)) {
+          sel.value = selectedVal;
+        } else if (hasAllPrefix && selectedVal === '' && q === '') {
+          sel.value = '';
+        } else {
+          selectedVal = sel.value;
+        }
+        return true;
+      }
+
+      input.oninput = () => {
+        const prevEffective = sel.value;
+        const hasResults = populate(true);
+        if (opts.onChange && hasResults && (hasAllPrefix || sel.value !== prevEffective)) {
+          opts.onChange();
+        }
+      };
+      populate(false);
+    }
+
     function switchTab(name, btn) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
       document.getElementById('tab-' + name).classList.add('active');
       btn.classList.add('active');
-      if (name === 'dashboard') loadDashboard();
-      if (name === 'inventory') loadInventory();
+      if (name === 'dashboard') loadDashboard(dashState.page, dashState.whPage);
+      if (name === 'inventory') loadInventory(invState.page);
       if (name === 'bom') loadBom();
-      if (name === 'procurement') loadProcurement();
-      if (name === 'shipments') loadShipments();
+      if (name === 'procurement') loadProcurement(procState.poPage, procState.catPage);
+      if (name === 'shipments') loadShipments(shipState.page);
     }
 
     async function checkHealth() {
@@ -443,9 +686,19 @@
       }
     }
 
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
+    function parseStrictInt(raw, label) {
+      if (raw === '' || raw === null || raw === undefined) {
+        showToast(`${label} cannot be empty.`, false);
+        return null;
+      }
+      const s = String(raw).trim();
+      const n = Number(s);
+      if (!/^[+-]?\d+$/.test(s) || !Number.isInteger(n)) {
+        showToast(`${label} must be a whole integer (decimals are not allowed).`, false);
+        return null;
+      }
+      return n;
+    }
 
     function parseStrictNumber(raw, label) {
       if (raw === '' || raw === null || raw === undefined) {
@@ -453,14 +706,13 @@
         return null;
       }
       const n = Number(raw);
-      if (Number.isNaN(n)) {
-        showToast(`${label} must be a valid number.`, false);
+      if (!Number.isFinite(n) || n <= 0) {
+        showToast(`${label} must be a valid positive number.`, false);
         return null;
       }
       return n;
     }
 
-    let cachedProdOpts = '';
     let supplierCatalogBySup = {};
 
     function onPoProductChange(selEl) {
@@ -503,8 +755,8 @@
       row.style.marginBottom = '8px';
       row.innerHTML = `
         <div class="field"><label>Product (Offered by Supplier)</label><select class="po-line-prod" onchange="onPoProductChange(this)">${supProdOpts}</select></div>
-        <div class="field"><label>Quantity</label><input class="po-line-qty" type="number" value="50" min="1" style="width:90px" /></div>
-        <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="${Number(available.supply_cost).toFixed(2)}" step="0.5" min="0.01" style="width:105px" /></div>
+        <div class="field"><label>Quantity</label><input class="po-line-qty" type="number" value="50" min="1" step="1" style="width:90px" /></div>
+        <div class="field"><label>Unit Cost ($)</label><input class="po-line-cost" type="number" value="${Number(available.supply_cost).toFixed(2)}" step="0.01" min="0.01" style="width:105px" /></div>
         <button class="btn btn-sm btn-warn" type="button" onclick="this.parentElement.remove()">Remove</button>
       `;
       const sel = row.querySelector('.po-line-prod');
@@ -515,18 +767,15 @@
     async function loadMeta() {
       const data = await apiJson('/api/products');
       if (!data.ok) return showToast(data.error || 'Failed to load metadata', false);
-      const whOpts = data.warehouses.map(w => `<option value="${esc(w.warehouse_id)}">${esc(w.warehouse_id)} — ${esc(w.name)}</option>`).join('');
-      document.getElementById('invWhFilter').innerHTML = '<option value="">All Warehouses</option>' + whOpts;
-      document.getElementById('bomWhSelect').innerHTML = whOpts;
-      document.getElementById('poWhSelect').innerHTML = whOpts;
-      document.getElementById('shOrigWh').innerHTML = whOpts;
-      document.getElementById('shDestWh').innerHTML = whOpts;
 
-      const supOpts = data.suppliers.map(s => `<option value="${esc(s.supplier_id)}">${esc(s.supplier_id)} — ${esc(s.name)}</option>`).join('');
-      document.getElementById('poSupSelect').innerHTML = supOpts;
-
-      const custOpts = (data.customers || []).map(c => `<option value="${esc(c.customer_id)}">${esc(c.customer_id)} — ${esc(c.name)}</option>`).join('');
-      document.getElementById('shCust').innerHTML = custOpts;
+      const whVal = w => w.warehouse_id;
+      const whLbl = w => `${w.warehouse_id} — ${w.name}`;
+      const supVal = s => s.supplier_id;
+      const supLbl = s => `${s.supplier_id} — ${s.name}`;
+      const custVal = c => c.customer_id;
+      const custLbl = c => `${c.customer_id} — ${c.name}`;
+      const prodVal = p => p.product_id;
+      const prodLbl = p => `${p.product_id} — ${p.name}`;
 
       supplierCatalogBySup = {};
       for (const sp of (data.supplier_products || [])) {
@@ -534,22 +783,54 @@
         supplierCatalogBySup[sp.supplier_id].push(sp);
       }
 
-      cachedProdOpts = data.products.map(p => `<option value="${esc(p.product_id)}">${esc(p.product_id)} — ${esc(p.name)}</option>`).join('');
-      document.getElementById('bomProductSelect').innerHTML = cachedProdOpts;
-      document.getElementById('addBomParent').innerHTML = cachedProdOpts;
-      document.getElementById('addBomChild').innerHTML = cachedProdOpts;
-      document.getElementById('slProdId').innerHTML = cachedProdOpts;
-      document.getElementById('shProd').innerHTML = cachedProdOpts;
-      document.getElementById('addBomParent').value = 'PRD-000007';
-      document.getElementById('addBomChild').value = 'PRD-000001';
-      document.getElementById('slProdId').value = 'PRD-000002';
+      bindSearchableSelect('invWhFilterSearch', 'invWhFilter', data.warehouses, whVal, whLbl, {
+        prefixHtml: '<option value="">All Warehouses</option>',
+        defaultVal: '',
+        onChange: () => loadInventory(1),
+      });
+      bindSearchableSelect('bomWhFilter', 'bomWhSelect', data.warehouses, whVal, whLbl, {
+        defaultVal: 'WH-000001',
+        onChange: () => loadBom(),
+      });
+      bindSearchableSelect('poWhFilter', 'poWhSelect', data.warehouses, whVal, whLbl, { defaultVal: 'WH-000001' });
+      bindSearchableSelect('shOrigWhFilter', 'shOrigWh', data.warehouses, whVal, whLbl, { defaultVal: 'WH-000001' });
+      bindSearchableSelect('shDestWhFilter', 'shDestWh', data.warehouses, whVal, whLbl, { defaultVal: 'WH-000002' });
+
+      bindSearchableSelect('poSupFilter', 'poSupSelect', data.suppliers, supVal, supLbl, {
+        defaultVal: 'SUP-000001',
+        onChange: () => onPoSupplierChange(),
+      });
+
+      bindSearchableSelect('shCustFilter', 'shCust', data.customers || [], custVal, custLbl, { defaultVal: 'CUS-000001' });
+
+      bindSearchableSelect('bomProdFilter', 'bomProductSelect', data.products, prodVal, prodLbl, {
+        defaultVal: 'PRD-000001',
+        onChange: () => loadBom(),
+      });
+      bindSearchableSelect('addBomParentFilter', 'addBomParent', data.products, prodVal, prodLbl, { defaultVal: 'PRD-000007' });
+      bindSearchableSelect('addBomChildFilter', 'addBomChild', data.products, prodVal, prodLbl, { defaultVal: 'PRD-000001' });
+      bindSearchableSelect('shProdFilter', 'shProd', data.products, prodVal, prodLbl, { defaultVal: 'PRD-000001' });
+      bindSearchableSelect('slProdFilter', 'slProdId', data.products, prodVal, prodLbl, { defaultVal: 'PRD-000002' });
 
       onPoSupplierChange();
     }
 
-    async function loadDashboard() {
-      const data = await apiJson('/api/dashboard');
+    function goAlertPage(p) { loadDashboard(p, dashState.whPage); }
+    function goWhSumPage(p) { loadDashboard(dashState.page, p); }
+
+    async function loadDashboard(page = 1, whPage = dashState.whPage) {
+      dashState.page = page;
+      dashState.whPage = whPage;
+      const q = document.getElementById('alertSearch').value.trim();
+      const whQ = document.getElementById('whSumSearch').value.trim();
+      const qs = new URLSearchParams({ page, page_size: 15, wh_page: whPage, wh_page_size: 25 });
+      if (q) qs.set('q', q);
+      if (whQ) qs.set('wh_q', whQ);
+
+      const data = await apiJson('/api/dashboard?' + qs.toString());
       if (!data.ok) return showToast(data.error, false);
+      dashState.page = data.alerts_pagination.page;
+      dashState.whPage = data.warehouses_pagination.page;
       const k = data.kpis;
       document.getElementById('kpiGrid').innerHTML = `
         <div class="kpi"><div class="label">Warehouses</div><div class="val">${esc(k.total_warehouses)}</div></div>
@@ -570,7 +851,8 @@
           <td>$${fmt(a.best_unit_cost)}</td>
           <td><span class="badge ${a.procurement_status === 'Open PO Exists' ? 'b-info' : 'b-warn'}">${esc(a.procurement_status)}</span></td>
         </tr>
-      `).join('') || '<tr><td colspan="9">All stock levels are healthy.</td></tr>';
+      `).join('') || '<tr><td colspan="9">No matching restock alerts.</td></tr>';
+      renderPager('alertsPager', data.alerts_pagination, 'goAlertPage');
 
       document.getElementById('whSummaryBody').innerHTML = data.warehouses.map(w => `
         <tr>
@@ -584,13 +866,24 @@
           <td>$${fmt(w.total_stock_value)}</td>
           <td><span class="badge ${w.low_stock_sku_count > 0 ? 'b-warn' : 'b-ok'}">${esc(w.low_stock_sku_count)}</span></td>
         </tr>
-      `).join('');
+      `).join('') || '<tr><td colspan="9">No warehouses match filter.</td></tr>';
+      renderPager('whSumPager', data.warehouses_pagination, 'goWhSumPage');
     }
 
-    async function loadInventory() {
+    async function loadInventory(page = 1) {
+      invState.page = page;
       const wh = document.getElementById('invWhFilter').value;
-      const data = await apiJson('/api/inventory' + (wh ? `?warehouse_id=${encodeURIComponent(wh)}` : ''));
+      const q = document.getElementById('invSearch').value.trim();
+      const pageSize = document.getElementById('invPageSize').value || '20';
+      const lowOnly = document.getElementById('invLowOnly').checked ? '1' : '';
+      const qs = new URLSearchParams({ page, page_size: pageSize });
+      if (wh) qs.set('warehouse_id', wh);
+      if (q) qs.set('q', q);
+      if (lowOnly) qs.set('low_only', '1');
+
+      const data = await apiJson('/api/inventory?' + qs.toString());
       if (!data.ok) return showToast(data.error, false);
+      invState.page = data.pagination.page;
       document.getElementById('invBody').innerHTML = data.items.map(r => {
         const low = r.quantity_on_hand < r.reorder_level;
         const inputId = `qty_${r.warehouse_id}_${r.product_id}`;
@@ -603,16 +896,17 @@
             <td>${esc(r.reorder_level)}</td>
             <td class="mono">${esc(r.last_updated)}</td>
             <td>
-              <input id="${esc(inputId)}" type="number" value="${esc(r.quantity_on_hand)}" style="width:85px" />
+              <input id="${esc(inputId)}" type="number" step="1" value="${esc(r.quantity_on_hand)}" style="width:85px" />
               <button class="btn btn-sm" onclick="updateStock('${esc(r.warehouse_id)}','${esc(r.product_id)}','${esc(inputId)}')">Save</button>
             </td>
           </tr>
         `;
-      }).join('');
+      }).join('') || '<tr><td colspan="7">No inventory records match your filter.</td></tr>';
+      renderPager('invPager', data.pagination, 'loadInventory');
     }
 
     async function updateStock(whId, prodId, inputId) {
-      const val = parseStrictNumber(document.getElementById(inputId).value.trim(), 'Quantity');
+      const val = parseStrictInt(document.getElementById(inputId).value.trim(), 'Quantity');
       if (val === null) return;
       const data = await apiJson('/api/inventory/update', {
         method: 'POST',
@@ -620,7 +914,7 @@
         body: JSON.stringify({ warehouse_id: whId, product_id: prodId, quantity_on_hand: val })
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadInventory();
+      if (data.ok) loadInventory(invState.page);
     }
 
     async function loadBom() {
@@ -657,7 +951,7 @@
     async function addBomLink() {
       const parent_product_id = document.getElementById('addBomParent').value;
       const component_product_id = document.getElementById('addBomChild').value;
-      const quantity_required = parseStrictNumber(document.getElementById('addBomQty').value.trim(), 'Quantity Required');
+      const quantity_required = parseStrictInt(document.getElementById('addBomQty').value.trim(), 'Quantity Required');
       if (quantity_required === null) return;
       const data = await apiJson('/api/bom/add', {
         method: 'POST',
@@ -668,9 +962,24 @@
       if (data.ok) loadBom();
     }
 
-    async function loadProcurement() {
-      const data = await apiJson('/api/procurement');
+    function goPoPage(p) { loadProcurement(p, procState.catPage); }
+    function goCatPage(p) { loadProcurement(procState.poPage, p); }
+
+    async function loadProcurement(poPage = 1, catPage = procState.catPage) {
+      procState.poPage = poPage;
+      procState.catPage = catPage;
+      const q = document.getElementById('poSearch').value.trim();
+      const status = document.getElementById('poStatusFilter').value;
+      const catQ = document.getElementById('supCatSearch').value.trim();
+      const qs = new URLSearchParams({ page: poPage, page_size: 15, cat_page: catPage, cat_page_size: 15 });
+      if (q) qs.set('q', q);
+      if (status) qs.set('status', status);
+      if (catQ) qs.set('cat_q', catQ);
+
+      const data = await apiJson('/api/procurement?' + qs.toString());
       if (!data.ok) return showToast(data.error, false);
+      procState.poPage = data.po_pagination.page;
+      procState.catPage = data.catalog_pagination.page;
       document.getElementById('poBody').innerHTML = data.purchase_orders.map(p => {
         const canReceive = !['Received', 'Cancelled'].includes(p.status);
         return `
@@ -690,7 +999,8 @@
             </td>
           </tr>
         `;
-      }).join('');
+      }).join('') || '<tr><td colspan="9">No purchase orders match your filter.</td></tr>';
+      renderPager('poPager', data.po_pagination, 'goPoPage');
 
       document.getElementById('supCatBody').innerHTML = data.supplier_catalog.map(c => `
         <tr>
@@ -700,7 +1010,8 @@
           <td><b>$${fmt(c.supply_cost)}</b></td>
           <td>${esc(c.lead_time_days)} days</td>
         </tr>
-      `).join('');
+      `).join('') || '<tr><td colspan="5">No supplier catalog entries match your filter.</td></tr>';
+      renderPager('supCatPager', data.catalog_pagination, 'goCatPage');
     }
 
     async function updatePoStatus(poId, status) {
@@ -710,12 +1021,22 @@
         body: JSON.stringify({ po_id: poId, status })
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadProcurement();
+      if (data.ok) loadProcurement(procState.poPage, procState.catPage);
     }
 
-    async function loadShipments() {
-      const data = await apiJson('/api/shipments');
+    async function loadShipments(page = 1) {
+      shipState.page = page;
+      const q = document.getElementById('shipSearch').value.trim();
+      const status = document.getElementById('shipStatusFilter').value;
+      const shipType = document.getElementById('shipTypeFilter').value;
+      const qs = new URLSearchParams({ page, page_size: 20 });
+      if (q) qs.set('q', q);
+      if (status) qs.set('status', status);
+      if (shipType) qs.set('shipment_type', shipType);
+
+      const data = await apiJson('/api/shipments?' + qs.toString());
       if (!data.ok) return showToast(data.error, false);
+      shipState.page = data.pagination.page;
       document.getElementById('shipBody').innerHTML = data.shipments.map(s => {
         let actions = '<small style="color:var(--muted)">Completed</small>';
         if (s.status === 'Pending') {
@@ -739,7 +1060,8 @@
             <td>${actions}</td>
           </tr>
         `;
-      }).join('');
+      }).join('') || '<tr><td colspan="9">No shipments match your filter.</td></tr>';
+      renderPager('shipPager', data.pagination, 'loadShipments');
     }
 
     async function updateShipmentStatus(shipmentId, status) {
@@ -749,7 +1071,7 @@
         body: JSON.stringify({ shipment_id: shipmentId, status })
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadShipments();
+      if (data.ok) loadShipments(shipState.page);
     }
 
     async function createPO() {
@@ -757,7 +1079,7 @@
       if (rowEls.length === 0) return showToast('Please add at least one product line.', false);
       const lines = [];
       for (const el of rowEls) {
-        const qty = parseStrictNumber(el.querySelector('.po-line-qty').value.trim(), 'Quantity');
+        const qty = parseStrictInt(el.querySelector('.po-line-qty').value.trim(), 'Quantity');
         const cost = parseStrictNumber(el.querySelector('.po-line-cost').value.trim(), 'Unit Cost');
         if (qty === null || cost === null) return;
         lines.push({
@@ -782,7 +1104,7 @@
         body: JSON.stringify(payload),
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadProcurement();
+      if (data.ok) loadProcurement(1, procState.catPage);
     }
 
     function toggleShipDest() {
@@ -792,7 +1114,7 @@
     }
 
     async function createShipment() {
-      const quantity_shipped = parseStrictNumber(document.getElementById('shQty').value.trim(), 'Quantity');
+      const quantity_shipped = parseStrictInt(document.getElementById('shQty').value.trim(), 'Quantity');
       if (quantity_shipped === null) return;
       const payload = {
         shipment_type: document.getElementById('shType').value,
@@ -809,13 +1131,13 @@
         body: JSON.stringify(payload),
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadShipments();
+      if (data.ok) loadShipments(1);
     }
 
     async function addShipmentLine() {
       const shipment_id = document.getElementById('slShipId').value.trim();
       const product_id = document.getElementById('slProdId').value;
-      const quantity_shipped = parseStrictNumber(document.getElementById('slQty').value.trim(), 'Quantity Shipped');
+      const quantity_shipped = parseStrictInt(document.getElementById('slQty').value.trim(), 'Quantity Shipped');
       if (quantity_shipped === null) return;
       const data = await apiJson('/api/shipments/add-line', {
         method: 'POST',
@@ -823,13 +1145,13 @@
         body: JSON.stringify({ shipment_id, product_id, quantity_shipped })
       });
       showToast(data.ok ? data.message : data.error, data.ok);
-      if (data.ok) loadShipments();
+      if (data.ok) loadShipments(shipState.page);
     }
 
     (async () => {
       await checkHealth();
       await loadMeta();
-      await loadDashboard();
+      await loadDashboard(1, 1);
     })();
   </script>
 </body>

@@ -132,6 +132,29 @@ ROLLBACK;
 -- INSERT INTO po_line (po_id, product_id, quantity_ordered, unit_cost)
 -- VALUES ('PO-000004', 'PRD-000001', 5, 2100.00); -- SUP-000003 does not supply PRD-000001
 
+-- TC21: Marking an empty Purchase Order (0 po_line rows) as Received (Expected: ERROR 1644 — Trigger 7b)
+-- START TRANSACTION;
+--     INSERT INTO purchase_order (po_id, supplier_id, warehouse_id, order_date, expected_delivery_date, status)
+--     VALUES ('PO-999921', 'SUP-000001', 'WH-000001', CURRENT_DATE, DATE_ADD(CURRENT_DATE, INTERVAL 7 DAY), 'Pending');
+--     UPDATE purchase_order SET status = 'Received' WHERE po_id = 'PO-999921';
+-- ROLLBACK;
+
+-- TC22: Marking an empty Shipment (0 shipment_line rows) as Delivered (Expected: ERROR 1644 — Trigger 6b)
+-- START TRANSACTION;
+--     INSERT INTO shipment (shipment_id, origin_warehouse_id, carrier_name, status, shipment_type)
+--     VALUES ('SHP-999922', 'WH-000001', 'Test Fleet', 'Pending', 'CUSTOMER_DELIVERY');
+--     INSERT INTO customer_delivery (shipment_id, customer_id) VALUES ('SHP-999922', 'CUS-000001');
+--     UPDATE shipment SET status = 'Delivered' WHERE shipment_id = 'SHP-999922';
+-- ROLLBACK;
+
+-- TC23: Reverting an Ordered Purchase Order backward to Pending/Approved (Expected: ERROR 1644 — Trigger 7b)
+-- UPDATE purchase_order SET status = 'Pending' WHERE po_id = 'PO-000003';
+
+-- TC24: Exceeding Warehouse Maximum Storage Capacity (Expected: ERROR 1644 — Trigger 9a / 9b)
+-- UPDATE inventory
+-- SET quantity_on_hand = 9999999
+-- WHERE warehouse_id = 'WH-000001' AND product_id = 'PRD-000001';
+
 
 -- =============================================================================
 -- SECTION 5.2: ROLE-BASED ACCESS CONTROL (RBAC — MySQL 8.0 Roles)
@@ -152,7 +175,8 @@ CREATE ROLE IF NOT EXISTS
 -- (a) Database Administrator: Full schema & data management
 GRANT ALL PRIVILEGES ON supply_chain_logistics_db.* TO 'role_db_admin';
 
--- (b) Warehouse Manager (FR1, FR3, FR7): Manage warehouses, real-time inventory, shipments & receipts
+-- (b) Warehouse Manager (FR1, FR3, FR7): Manage warehouses, real-time inventory, shipments & receipts;
+--     column-level reference SELECT on customer & supplier (ID + name only) to protect PII (NFR2)
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.warehouse TO 'role_warehouse_manager';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.inventory TO 'role_warehouse_manager';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment TO 'role_warehouse_manager';
@@ -160,6 +184,9 @@ GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.warehouse_transfer TO 
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.customer_delivery TO 'role_warehouse_manager';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment_line TO 'role_warehouse_manager';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.goods_receipt TO 'role_warehouse_manager';
+GRANT SELECT (customer_id, name) ON supply_chain_logistics_db.customer TO 'role_warehouse_manager';
+GRANT SELECT (supplier_id, name) ON supply_chain_logistics_db.supplier TO 'role_warehouse_manager';
+GRANT SELECT ON supply_chain_logistics_db.supplier_product TO 'role_warehouse_manager';
 GRANT SELECT ON supply_chain_logistics_db.product TO 'role_warehouse_manager';
 GRANT SELECT ON supply_chain_logistics_db.v_restock_alerts TO 'role_warehouse_manager';
 GRANT SELECT ON supply_chain_logistics_db.v_warehouse_inventory_summary TO 'role_warehouse_manager';
@@ -176,13 +203,15 @@ GRANT SELECT ON supply_chain_logistics_db.inventory TO 'role_purchasing_staff';
 GRANT SELECT ON supply_chain_logistics_db.v_restock_alerts TO 'role_purchasing_staff';
 
 -- (d) Warehouse Staff (FR3, FR7): Process shipments & goods receipts; read-only on inventory/products;
---     column-level SELECT on customer (customer_id, name only) so PII (email, phone, address) stays hidden (NFR2)
+--     column-level SELECT on customer & supplier (ID + name only) so PII (email, phone, address) stays hidden (NFR2)
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.warehouse_transfer TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.customer_delivery TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.shipment_line TO 'role_warehouse_staff';
 GRANT SELECT, INSERT, UPDATE ON supply_chain_logistics_db.goods_receipt TO 'role_warehouse_staff';
 GRANT SELECT (customer_id, name) ON supply_chain_logistics_db.customer TO 'role_warehouse_staff';
+GRANT SELECT (supplier_id, name) ON supply_chain_logistics_db.supplier TO 'role_warehouse_staff';
+GRANT SELECT ON supply_chain_logistics_db.supplier_product TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.inventory TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.product TO 'role_warehouse_staff';
 GRANT SELECT ON supply_chain_logistics_db.warehouse TO 'role_warehouse_staff';

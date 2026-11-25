@@ -19,7 +19,7 @@ WITH RECURSIVE bom_tree AS (
         pc.quantity_required AS qty_per_parent,
         pc.quantity_required AS total_qty_needed,
         1 AS bom_level,
-        CAST(CONCAT(pc.parent_product_id, ' -> ', pc.component_product_id) AS CHAR(500)) AS bom_path
+        CAST(CONCAT(pc.parent_product_id, ' -> ', pc.component_product_id) AS CHAR(1000)) AS bom_path
     FROM product_component AS pc
     WHERE pc.parent_product_id = 'PRD-000001'
 
@@ -35,7 +35,7 @@ WITH RECURSIVE bom_tree AS (
     FROM product_component AS pc
     INNER JOIN bom_tree AS bt
         ON pc.parent_product_id = bt.component_product_id
-    WHERE bt.bom_level < 10
+    WHERE bt.bom_level < 15
 )
 SELECT
     bt.bom_level,
@@ -76,7 +76,7 @@ WITH RECURSIVE where_used AS (
     FROM product_component AS pc
     INNER JOIN where_used AS wu
         ON pc.component_product_id = wu.affected_product_id
-    WHERE wu.levels_up < 10
+    WHERE wu.levels_up < 15
 )
 SELECT
     wu.levels_up,
@@ -298,7 +298,7 @@ WITH RECURSIVE bom_leaf AS (
     FROM product_component AS pc
     INNER JOIN bom_leaf AS bl
         ON pc.parent_product_id = bl.component_product_id
-    WHERE bl.depth < 10
+    WHERE bl.depth < 15
 ),
 leaf_requirements AS (
     SELECT
